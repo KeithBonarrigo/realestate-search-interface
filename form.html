@@ -1,0 +1,1946 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+BAJA SUR REALTORS - FRONTEND APPLICATION (form.html)
+================================================================================
+
+This is the main frontend HTML file for the MLS property search application.
+It provides a rich user interface for searching and viewing real estate listings.
+
+ARCHITECTURE OVERVIEW:
+=====================
+This file is served by index.js via the GET "/" route. Before serving, the server
+injects data by replacing placeholder scripts:
+- <script>XXXXXX</script> → Becomes: let SAMPLE_LISTINGS = [array of listings]
+- <script>PARAMS</script> → Becomes: let PARAMS = "search parameters"
+
+KEY SECTIONS:
+1. HEAD - External dependencies (Bootstrap, Leaflet, FontAwesome)
+2. NAVBAR - Navigation and favorites counter (currently hidden)
+3. LEFT PANEL - Search filters and property cards
+4. RIGHT PANEL - Interactive map and property preview
+
+JAVASCRIPT FUNCTIONALITY (in <script> at bottom):
+- Search form handling and API calls to /search endpoint
+- Property card generation and display
+- Leaflet map initialization with property markers
+- View mode switching (grid/list/compact)
+- Favorites management
+- Property detail modal
+
+COMMUNICATION WITH BACKEND:
+- Calls POST /search with search filters
+- Requires API_TOKEN for authentication
+- Receives JSON array of listings with photos/tours
+
+EXTERNAL DEPENDENCIES:
+- Bootstrap 5.1.3: UI framework and responsive grid
+- Leaflet 1.7.1: Interactive maps
+- Font Awesome 5.15.4: Icons
+- Google Fonts (Poppins): Typography
+================================================================================
+-->
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Baja Sur Realtors | Luxury Real Estate</title>
+
+    <!-- ======================================================================
+         EXTERNAL STYLESHEETS
+         ====================================================================== -->
+
+    <!-- Google Fonts - Poppins for modern typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Leaflet CSS - Required for interactive map functionality -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css">
+
+    <!-- Bootstrap CSS - UI framework for responsive layout -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- Font Awesome - Icon library for UI elements -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+
+    <!-- Custom CSS - Application-specific styles (public/styles.css) -->
+    <link rel="stylesheet" href="/styles.css">
+
+    <!-- ======================================================================
+         SERVER-INJECTED DATA
+         These placeholders are replaced by index.js before serving:
+         - XXXXXX → SAMPLE_LISTINGS array from session/database
+         - PARAMS → Search parameters from URL query string
+         ====================================================================== -->
+    <script>XXXXXX</script>
+    <script>PARAMS</script>
+
+    <script>
+        // Debug: Uncomment to log all listings to console
+        /*SAMPLE_LISTINGS.forEach((listing, index) => {
+            console.log(`Listing ${index + 1}:`);
+            for (const [key, value] of Object.entries(listing)) {
+                console.log(`${key}: ${value}`);
+            }
+            console.log('---');
+        });*/
+    </script>
+</head>
+<body class="modern-theme">
+    <!-- ======================================================================
+         NAVIGATION BAR (Currently Hidden)
+         Contains: Logo, Favorites counter, Contact button
+         ====================================================================== -->
+    <nav class="navbar navbar-expand-lg navbar-light" style="display:none">
+        <div class="container-fluid px-4">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-home"></i> Baja Properties
+            </a>
+            <div class="d-flex align-items-center">
+                <button class="btn btn-outline-primary me-2" id="favoritesBtn">
+                    <i class="far fa-heart"></i>
+                    <span class="favorite-count">0</span> Favorites
+                </button>
+                <button class="btn btn-primary">Contact Us</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ======================================================================
+         MAIN LAYOUT: SPLIT VIEW CONTAINER
+         ======================================================================
+         The page uses a two-panel layout:
+         - LEFT PANEL (60%): Search filters + property listings
+         - RIGHT PANEL (40%): Interactive map + property preview
+
+         This layout is responsive and stacks vertically on mobile devices.
+         ====================================================================== -->
+    <div class="split-view-container">
+
+        <!-- ==================================================================
+             LEFT PANEL: SEARCH FILTERS AND PROPERTY CARDS
+             ==================================================================
+             Contains:
+             1. Search form with filter dropdowns
+             2. Feature toggle buttons (CFE, Pool, etc.)
+             3. View mode controls (Grid/List/Compact)
+             4. Property cards container
+             ================================================================== -->
+        <div class="left-panel">
+
+            <!-- Search Filters Container (glass-morphism effect) -->
+            <div class="search-container glass-morphism">
+                <!--
+                SEARCH FORM
+                ===========
+                Collects user filters and triggers API search.
+                Form submission is handled by JavaScript (searchBtn click handler).
+                Does NOT submit traditionally - uses fetch() to POST to /search.
+                -->
+                <form action="/" id="propertySearchForm" name="propertySearchForm" method="post" class="w-100">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <div class="form-floating">
+                                <select id="propertyType" name="propertyType" class="form-select" onchange="updateFilters('propertyType', this.value)">
+                                    <option value="">All Types</option>
+                                    <option value="Houses">House</option>
+                                    <option value="Apartments">Apartment</option>
+                                    <option value="Condos">Condo</option>
+                                    <option value="Land">Land</option>
+                                </select>
+                                <label>Property Type</label>
+                            </div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <div class="form-floating">
+                                <select id="location" name="location" class="form-select" onchange="updateFilters('location', this.value)">
+                                    <option value="">All Locations</option>
+                                    <option value="Bay of Dreams">Bay of Dreams</option>
+                                    <option value="Cerro Colorado">Cerro Colorado</option>
+                                    <option value="Constitucion">Constitucion</option>
+                                    <option value="CSL-Beach & Marina">CSL-Beach & Marina</option>
+                                    <option value="CSL-Centro">CSL-Centro</option>
+                                    <option value="CSL Cor-Inland">CSL Cor-Inland</option>
+                                    <option value="CSL-Corr. Oceanside">CSL-Corr. Oceanside</option>
+                                    <option value="CSL-North">CSL-North</option>
+                                    <option value="East Cape North">East Cape North</option>
+                                    <option value="East Cape South">East Cape South</option>
+                                    <option value="Ejidos">Ejidos</option>
+                                    <option value="El Centenario">El Centenario</option>
+                                    <option value="El Sargento">El Sargento</option>
+                                    <option value="Excondido South">Excondido South</option>
+                                    <option value="LaPaz Beach">LaPaz Beach</option>
+                                    <option value="La Paz City">La Paz City</option>
+                                    <option value="All La Paz">All La Paz Listings</option>
+                                    <option value="La Ventana">La Ventana</option>
+                                    <option value="Loreto">Loreto</option>
+                                    <option value="Los Planes">Los Planes</option>
+                                    <option value="Mulege">Mulege</option>
+                                    <option value="Nopolo">Nopolo</option>
+                                    <option value="Pacific North">Pacific North</option>
+                                    <option value="Pacific South">Pacific South</option>
+                                    <option value="San Juan de la Costa">San Juan de la Costa</option>
+                                    <option value="San Pedro">San Pedro</option>
+                                    <option value="Scorpion Bay">Scorpion Bay</option>
+                                    <option value="SJD-Beachside">SJD-Beachside</option>
+                                    <option value="SJD-Centro">SJD-Centro</option>
+                                    <option value="SJD Corr-Inland">SJD Corr-Inland</option>
+                                    <option value="SJD Corr-Oceanside">SJD Corr-Oceanside</option>
+                                    <option value="SJD-East">SJD-East</option>
+                                    <option value="SJD-Inland/Golf">SJD-Inland/Golf</option>
+                                    <option value="SJD-North">SJD-North</option>
+                                </select>
+                                <label>Location</label>
+                            </div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <div class="form-floating">
+                                <select id="priceRange" name="priceRange" class="form-select" onchange="updateFilters('priceRange', this.value)">
+                                    <option value="">Any Price</option>
+                                    <option value="0-100000">$0 - $100,000</option>
+                                    <option value="100000-200000">$100,000 - $200,000</option>
+                                    <option value="200000-300000">$200,000 - $300,000</option>
+                                    <option value="300000-400000">$300,000 - $400,000</option>
+                                    <option value="400000-">$400,000+</option>
+                                </select>
+                                <label>Price Range</label>
+                            </div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <div class="form-floating">
+                                <select id="bedrooms" name="bedrooms" class="form-select" onchange="updateFilters('bedrooms', this.value)">
+                                    <option value="">Any</option>
+                                    <option value="1">1+</option>
+                                    <option value="2">2+</option>
+                                    <option value="3">3+</option>
+                                    <option value="4">4+</option>
+                                    <option value="5">5+</option>
+                                </select>
+                                <label>Bedrooms</label>
+                            </div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <div class="form-floating">
+                                <select id="bathrooms" name="bathrooms" class="form-select" onchange="updateFilters('bathrooms', this.value)">
+                                    <option value="">Any</option>
+                                    <option value="1">1+</option>
+                                    <option value="2">2+</option>
+                                    <option value="3">3+</option>
+                                    <option value="4">4+</option>
+                                    <option value="5">5+</option>
+                                </select>
+                                <label>Bathrooms</label>
+                            </div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <button class="btn btn-primary w-100 h-100" onclick="applyFilters()">
+                                <i class="fas fa-search"></i> Search Properties
+                            </button>
+                        </div>
+                    </div>
+                    <input type="hidden" name="params" id="params" value="null" />
+                </form>
+            </div>
+
+            <!-- Active Filters -->
+            <div id="activeFilters" class="active-filters glass-morphism">
+                <h6><i class="fas fa-filter"></i> Active Filters</h6>
+                <div id="filterTags" class="filter-tags"></div>
+            </div>
+
+            <!-- View Controls -->
+            <div class="view-controls-container glass-morphism">
+                <div class="btn-group">
+                    <button class="btn btn-outline-primary active" onclick="changeView('grid')">
+                        <i class="fas fa-th"></i>
+                    </button>
+                    <button class="btn btn-outline-primary" onclick="changeView('list')">
+                        <i class="fas fa-list"></i>
+                    </button>
+                    <button class="btn btn-outline-primary" onclick="changeView('compact')">
+                        <i class="fas fa-th-large"></i>
+                    </button>
+                </div>
+                <div class="results-count">
+                    <span id="resultsCount">0</span> properties found
+                </div>
+            </div>
+
+            <!--
+            PROPERTIES LIST CONTAINER
+            =========================
+            Property cards are dynamically generated here by JavaScript.
+            The renderProperties() function populates this container.
+            -->
+            <div id="propertiesList" class="properties-container"></div>
+        </div>
+
+        <!-- ==================================================================
+             RIGHT PANEL: MAP AND PROPERTY PREVIEW
+             ==================================================================
+             Contains:
+             1. Interactive Leaflet map showing property markers
+             2. Selected property preview panel
+             ================================================================== -->
+        <div class="right-panel">
+            <!-- Leaflet Map Container - Initialized by initMap() in JavaScript -->
+            <div id="map" class="map-container glass-morphism"></div>
+
+            <!-- Property Preview - Shows details when a marker or card is clicked -->
+            <div id="selectedProperty" class="selected-property glass-morphism"></div>
+        </div>
+    </div>
+
+    <!-- ======================================================================
+         PROPERTY DETAIL MODAL
+         ======================================================================
+         Bootstrap modal for displaying full property details.
+         Content is dynamically generated by showPropertyDetail() function.
+         ====================================================================== -->
+    <div class="modal fade modal-property" id="propertyModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content glass-morphism">
+                <div id="propertyModalContent" class="modal-body p-0"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay - Displayed during API calls -->
+    <div class="loading-overlay">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <!-- ======================================================================
+         JAVASCRIPT LIBRARIES
+         ====================================================================== -->
+    <!-- Leaflet.js - Map library -->
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+
+    <!-- Bootstrap JS - For modal and other interactive components -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- Note: search_res.js was external JS but is now unused/commented out -->
+    <script>
+    /**
+     * =========================================================================
+     * FRONTEND APPLICATION JAVASCRIPT
+     * =========================================================================
+     *
+     * This script handles all client-side functionality for the property search
+     * application. It manages:
+     *
+     * 1. SEARCH FUNCTIONALITY
+     *    - Form submission handling
+     *    - API calls to /search endpoint
+     *    - Filter state management
+     *
+     * 2. PROPERTY DISPLAY
+     *    - Rendering property cards (grid/list/compact views)
+     *    - Property detail modal
+     *    - Image gallery handling
+     *
+     * 3. MAP INTEGRATION
+     *    - Leaflet map initialization
+     *    - Property markers with custom styling
+     *    - Map-card synchronization (click marker = highlight card)
+     *
+     * 4. USER FEATURES
+     *    - View mode switching
+     *    - Favorites management (localStorage)
+     *    - Active filters display
+     *
+     * KEY GLOBAL VARIABLES:
+     * - SAMPLE_LISTINGS: Array of property objects (injected by server)
+     * - PARAMS: Search parameters from URL (injected by server)
+     * - map: Leaflet map instance
+     * - markers: Object storing map markers by listing ID
+     * - currentFilters: Object tracking active filter values
+     *
+     * API COMMUNICATION:
+     * - POST /search: Main search endpoint (requires API_TOKEN)
+     * - Request body: { propertyType, location, priceRange, bedrooms, etc. }
+     * - Response: { success: true, data: [listings array] }
+     * =========================================================================
+     */
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const form = document.getElementById('propertySearchForm');
+
+            /**
+             * Form Submit Handler (Legacy - uses old "/" endpoint)
+             * This handler submits to "/" but the main search uses the
+             * searchBtn click handler which calls /search instead.
+             */
+            form.addEventListener('submit', async function (event) {
+                event.preventDefault();
+
+                const formData = new FormData(form);
+
+                let propInfo = {};
+                // Extract form field values into object
+                for (let [key, value] of formData.entries()) {
+                    console.log(`${key}: ${value}`);
+                    if(value){
+                    propInfo[key] = value;
+                    }
+                }
+
+                console.log('propInfo', propInfo);
+                try {
+                    const response = await fetch('/', {
+                        method: 'POST',
+                        body: JSON.stringify(propInfo),
+                        headers: {
+                            'Content-Type': 'application/json',
+                        }
+
+                    });
+
+                    console.log('fire form');
+                    if (response.ok) {
+                        const result = await response.json();
+                        console.log(result);
+                            SAMPLE_LISTINGS = result.data;
+                            console.log('sample', SAMPLE_LISTINGS);
+                            applyFilters();
+                    } else {
+                        console.error('Form submission failed');
+                    }
+                } catch (error) {
+                    console.error('Error submitting form:', error);
+                }
+            });
+        });
+    </script>
+    
+    <!--begin db.js code-->
+    <script>
+        // Estado global de la aplicación
+        const APP = {
+            currentView: 'grid',
+            activeFilters: {},
+            map: null,
+            markers: [],
+            favorites: new Set(JSON.parse(localStorage.getItem('favorites') || '[]')),
+            selectedProperty: null
+        };
+        
+        // Función principal de filtrado
+        function applyFilters() {
+            showLoadingOverlay();
+            console.log('sample listings', SAMPLE_LISTINGS);
+
+            // Función para actualizar los marcadores del mapa
+            function updateMapMarkers(filteredListings = SAMPLE_LISTINGS) {
+            try {
+                // Limpiar marcadores existentes
+                APP.markers.forEach(marker => marker.remove());
+                APP.markers = [];
+        
+                filteredListings.forEach(property => {
+                    if (property.latitude && property.longitude) {
+                        // Crear el contenido del marcador
+                        const markerContent = document.createElement('div');
+                        markerContent.className = 'map-marker';
+                        
+                        // Si es la propiedad seleccionada, agregar clase active
+                        if (property.id === APP.selectedProperty) {
+                            markerContent.classList.add('active');
+                        }
+                        
+                        // Agregar el precio
+                        const priceSpan = document.createElement('span');
+                        priceSpan.className = 'marker-price';
+                        priceSpan.innerHTML = `<i class="fas fa-tag"></i> ${formatPrice(property.currentpricepublic)}`;
+                        
+                        // Agregar icono según tipo de propiedad
+                        const iconSpan = document.createElement('span');
+                        iconSpan.className = 'marker-icon';
+                        if (property.propertytypelabel?.toLowerCase().includes('house')) {
+                            iconSpan.innerHTML = '<i class="fas fa-home"></i>';
+                        } else if (property.propertytypelabel?.toLowerCase().includes('land')) {
+                            iconSpan.innerHTML = '<i class="fas fa-mountain"></i>';
+                        } else {
+                            iconSpan.innerHTML = '<i class="fas fa-building"></i>';
+                        }
+        
+                        markerContent.appendChild(iconSpan);
+                        markerContent.appendChild(priceSpan);
+        
+                        // Crear el marcador
+                        const marker = L.marker([property.latitude, property.longitude], {
+                            icon: L.divIcon({
+                                className: 'custom-marker-container',
+                                html: markerContent,
+                                iconSize: null,
+                                iconAnchor: [15, 40],
+                                popupAnchor: [0, -40]
+                            })
+                        });
+        
+                        marker.propertyId = property.id;
+        
+                        // Agregar evento click
+                        marker.on('click', () => {
+                            // Remover clase active de todos los marcadores
+                            document.querySelectorAll('.map-marker').forEach(m => {
+                                m.classList.remove('active');
+                            });
+                            // Agregar clase active al marcador seleccionado
+                            markerContent.classList.add('active');
+                            
+                            selectProperty(property.id);
+                        });
+        
+                        marker.addTo(APP.map);
+                        APP.markers.push(marker);
+                    }
+                });
+        
+                // Ajustar el mapa para mostrar todos los marcadores
+                if (APP.markers.length > 0) {
+                    const group = L.featureGroup(APP.markers);
+                    APP.map.fitBounds(group.getBounds().pad(0.1));
+                }
+            } catch (error) {
+                console.error('Error updating map markers:', error);
+            }
+        }
+        
+        // Función para actualizar el estado activo de los marcadores
+        function updateMarkerStates(activePropertyId) {
+            document.querySelectorAll('.map-marker').forEach(markerEl => {
+                const marker = APP.markers.find(m => m.propertyId === activePropertyId);
+                if (marker && marker.getElement().contains(markerEl)) {
+                    markerEl.classList.add('active');
+                } else {
+                    markerEl.classList.remove('active');
+                }
+            });
+        }
+        
+        // Agregar la nueva función createCustomMarker aquí
+        function createCustomMarker(property) {
+            const markerEl = document.createElement('div');
+            markerEl.className = 'map-marker';
+            
+            // Tipo de propiedad
+            const icon = document.createElement('span');
+            icon.className = 'icon';
+            
+            // Seleccionar icono según el tipo de propiedad
+            if (property.propertytypelabel.toLowerCase().includes('house')) {
+                icon.innerHTML = '<i class="fas fa-home"></i>';
+            } else if (property.propertytypelabel.toLowerCase().includes('land')) {
+                icon.innerHTML = '<i class="fas fa-mountain"></i>';
+            } else {
+                icon.innerHTML = '<i class="fas fa-building"></i>';
+            }
+            
+            // Precio formateado
+            const price = document.createElement('span');
+            price.className = 'price';
+            price.textContent = formatPrice(property.currentpricepublic);
+            
+            markerEl.appendChild(icon);
+            markerEl.appendChild(price);
+            
+            // Crear marcador de Leaflet
+            const marker = L.marker([property.latitude, property.longitude], {
+                icon: L.divIcon({
+                    className: 'custom-marker',
+                    html: markerEl,
+                    iconSize: null
+                })
+            });
+            
+            marker.propertyId = property.id;
+            
+            // Eventos del marcador
+            marker.on('click', () => {
+                selectProperty(property.id);
+            });
+        
+            // Agregar eventos hover
+            markerEl.addEventListener('mouseenter', () => {
+                markerEl.classList.add('hover');
+            });
+        
+            markerEl.addEventListener('mouseleave', () => {
+                markerEl.classList.remove('hover');
+            });
+            
+            return marker;
+        }
+        
+        // Función para actualizar el estado activo de los marcadores
+        function updateMarkerStates(activePropertyId) {
+            APP.markers.forEach(marker => {
+                const markerElement = marker.getElement();
+                if (markerElement) {
+                    const markerDiv = markerElement.querySelector('.map-marker');
+                    if (markerDiv) {
+                        markerDiv.classList.toggle('active', marker.propertyId === activePropertyId);
+                    }
+                }
+            });
+        }
+            try {
+                let filteredListings = [...SAMPLE_LISTINGS];
+                
+                // Filtrar por tipo de propiedad
+                if (APP.activeFilters.propertyType) {
+                    filteredListings = filteredListings.filter(listing => 
+                        listing.propertytypelabel === APP.activeFilters.propertyType);
+                }
+        
+                // Filtrar por ubicación
+                if (APP.activeFilters.location) {
+                    filteredListings = filteredListings.filter(listing => 
+                        listing.mlsareamajor === APP.activeFilters.location);
+                }
+        
+                // Filtrar por rango de precio
+                if (APP.activeFilters.priceRange) {
+                    const [minStr, maxStr] = APP.activeFilters.priceRange.split('-');
+                    const min = parseInt(minStr);
+                    const max = maxStr ? parseInt(maxStr) : Infinity;
+                    
+                    filteredListings = filteredListings.filter(listing => {
+                        const price = parseInt(listing.currentpricepublic);
+                        return price >= min && price <= max;
+                    });
+                }
+        
+                // Filtrar por número de dormitorios
+                if (APP.activeFilters.bedrooms) {
+                    const minBeds = parseInt(APP.activeFilters.bedrooms);
+                    filteredListings = filteredListings.filter(listing => {
+                        const beds = parseInt(listing.bedstotal) || 0;
+                        return beds >= minBeds;
+                    });
+                }
+        
+                // Filtrar por número de baños
+                if (APP.activeFilters.bathrooms) {
+                    const minBaths = parseFloat(APP.activeFilters.bathrooms);
+                    filteredListings = filteredListings.filter(listing => {
+                        const baths = parseFloat(listing.bathroomstotaldecimal) || 0;
+                        return baths >= minBaths;
+                    });
+                }
+        
+                // Actualizar el contador de resultados
+                const resultsCount = document.getElementById('resultsCount');
+                if (resultsCount) {
+                    resultsCount.textContent = filteredListings.length;
+                }
+        
+                // Actualizar la vista de propiedades
+                const container = document.getElementById('propertiesList');
+                if (container) {
+                    container.innerHTML = filteredListings.map(listing => renderPropertyCard(listing)).join('');
+                }
+        
+                // Actualizar marcadores del mapa
+                updateMapMarkers(filteredListings);
+        
+            } catch (error) {
+                console.error('Error applying filters:', error);
+            } finally {
+                hideLoadingOverlay();
+            }
+        }
+        
+        // Función para actualizar los filtros
+        function updateFilters(filterType, value) {
+            console.log('Updating filter:', filterType, value); // Debug log
+            
+            if (!value || value === '') {
+                delete APP.activeFilters[filterType];
+            } else {
+                APP.activeFilters[filterType] = value;
+            }
+            
+            updateFilterTags();
+            applyFilters();
+        }
+        
+        // Event Listeners para los filtros
+        document.addEventListener('DOMContentLoaded', () => {
+            // Agregar event listeners a todos los selectores de filtro
+            const filterSelects = {
+                propertyType: document.getElementById('propertyType'),
+                location: document.getElementById('location'),
+                priceRange: document.getElementById('priceRange'),
+                bedrooms: document.getElementById('bedrooms'),
+                bathrooms: document.getElementById('bathrooms')
+            };
+        
+            Object.entries(filterSelects).forEach(([filterType, select]) => {
+                if (select) {
+                    select.addEventListener('change', (e) => {
+                        console.log(`${filterType} changed to:`, e.target.value); // Debug log
+                        updateFilters(filterType, e.target.value);
+                    });
+                }
+            });
+        
+            // Inicializar los filtros
+            applyFilters();
+        });
+        
+        // Función para remover un filtro
+        function removeFilter(filterType) {
+            const select = document.getElementById(filterType);
+            if (select) {
+                select.value = '';
+            }
+            delete APP.activeFilters[filterType];
+            updateFilterTags();
+            applyFilters();
+        }
+        
+        // Función para actualizar las etiquetas de filtros activos
+        function updateFilterTags() {
+            const container = document.getElementById('filterTags');
+            if (!container) return;
+        
+            const tags = Object.entries(APP.activeFilters)
+                .filter(([_, value]) => value) // Solo mostrar filtros con valores
+                .map(([type, value]) => {
+                    let displayValue = value;
+                    
+                    // Formatear el valor según el tipo de filtro
+                    switch(type) {
+                        case 'priceRange':
+                            const [min, max] = value.split('-');
+                            displayValue = max ? 
+                                `$${min} - $${max}` : 
+                                `$${min}+`;
+                            break;
+                        case 'bedrooms':
+                            displayValue = `${value}+ beds`;
+                            break;
+                        case 'bathrooms':
+                            displayValue = `${value}+ baths`;
+                            break;
+                    }
+        
+                    return `
+                        <span class="filter-tag">
+                            ${type}: ${displayValue}
+                            <button class="remove-filter" onclick="removeFilter('${type}')">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </span>
+                    `;
+                });
+        
+            container.innerHTML = tags.join('');
+        }
+        
+        
+        
+        // Función para cambiar la vista
+        function changeView(viewType) {
+            const container = document.getElementById('propertiesList');
+            if (!container) return;
+        
+            // Actualizar estado actual
+            APP.currentView = viewType;
+        
+            // Actualizar botones
+            document.querySelectorAll('.view-controls-container .btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelector(`.btn[onclick*="${viewType}"]`).classList.add('active');
+        
+            // Actualizar clase del contenedor
+            container.className = `properties-container ${viewType}-layout`;
+        
+            // Ajustar el layout según el tipo de vista
+            switch(viewType) {
+                case 'grid':
+                    container.style.gridTemplateColumns = 'repeat(auto-fill, minmax(300px, 1fr))';
+                    container.style.gap = '1.5rem';
+                    break;
+                case 'list':
+                    container.style.gridTemplateColumns = '1fr';
+                    container.style.gap = '1rem';
+                    break;
+                case 'compact':
+                    container.style.gridTemplateColumns = 'repeat(auto-fill, minmax(250px, 1fr))';
+                    container.style.gap = '1rem';
+                    break;
+            }
+        
+            // Volver a aplicar los filtros para actualizar la vista
+            applyFilters();
+        }
+        
+        
+        // Función mejorada para alternar favoritos
+        function toggleFavorite(propertyId) {
+            if (APP.favorites.has(propertyId)) {
+                APP.favorites.delete(propertyId);
+            } else {
+                APP.favorites.add(propertyId);
+            }
+            
+            // Actualizar localStorage
+            localStorage.setItem('favorites', JSON.stringify([...APP.favorites]));
+            
+            // Actualizar UI
+            updateFavoriteButtons(propertyId);
+            updateFavoriteCount();
+            
+            // Actualizar el botón de favorito en el preview de la propiedad
+            updatePreviewFavoriteButton(propertyId);
+        }
+        
+        function updatePreviewFavoriteButton(propertyId) {
+            const previewFavoriteBtn = document.querySelector(`.preview-actions .btn[onclick*="toggleFavorite('${propertyId}')"]`);
+            if (previewFavoriteBtn) {
+                const isFavorite = APP.favorites.has(propertyId);
+                previewFavoriteBtn.classList.toggle('btn-danger', isFavorite);
+                previewFavoriteBtn.classList.toggle('btn-outline-danger', !isFavorite);
+                previewFavoriteBtn.innerHTML = `<i class="fa${isFavorite ? 's text-white' : 'r'} fa-heart"></i> ${isFavorite ? 'Saved' : 'Save'}`;
+            }
+        }
+        
+        function updateFavoriteButtons(propertyId) {
+            const buttons = document.querySelectorAll(`.favorite-btn[data-property-id="${propertyId}"]`);
+            const isFavorite = APP.favorites.has(propertyId);
+        
+            buttons.forEach(button => {
+                button.classList.toggle('active', isFavorite);
+                button.innerHTML = `<i class="fa${isFavorite ? 's text-white' : 'r'} fa-heart"></i> ${isFavorite ? 'Saved' : 'Save'}`;
+                button.classList.toggle('btn-danger', isFavorite);
+                button.classList.toggle('btn-outline-danger', !isFavorite);
+            });
+        
+            // Actualizar el botón de favorito en el preview de la propiedad
+            const previewFavoriteBtn = document.querySelector(`.preview-actions .btn[onclick*="${propertyId}"]`);
+            if (previewFavoriteBtn) {
+                previewFavoriteBtn.classList.toggle('btn-danger', isFavorite);
+                previewFavoriteBtn.classList.toggle('btn-outline-danger', !isFavorite);
+                previewFavoriteBtn.innerHTML = `<i class="fa${isFavorite ? 's text-white' : 'r'} fa-heart"></i> ${isFavorite ? 'Saved' : 'Save'}`;
+            }
+        }
+        
+        function updateFavoriteButtons(propertyId) {
+            const buttons = document.querySelectorAll(`.favorite-btn[data-property-id="${propertyId}"]`);
+            const isFavorite = APP.favorites.has(propertyId);
+            
+            buttons.forEach(button => {
+                button.classList.toggle('active', isFavorite);
+                button.innerHTML = `<i class="fa${isFavorite ? 's text-white' : 'r'} fa-heart"></i>`;
+                button.classList.toggle('btn-danger', isFavorite);
+                button.classList.toggle('btn-outline-danger', !isFavorite);
+            });
+        }
+        
+        // Función para actualizar botones de favoritos
+        function updateFavoriteButtons(propertyId) {
+            const buttons = document.querySelectorAll(`.favorite-btn[data-property-id="${propertyId}"]`);
+            const isFavorite = APP.favorites.has(propertyId);
+            
+            buttons.forEach(button => {
+                button.classList.toggle('active', isFavorite);
+                button.innerHTML = `<i class="fa${isFavorite ? 's' : 'r'} fa-heart"></i>`;
+            });
+        }
+        
+        // Función para actualizar contador de favoritos
+        function updateFavoriteCount() {
+            const count = document.querySelector('.favorite-count');
+            if (count) {
+                count.textContent = APP.favorites.size;
+            }
+        }
+        
+        // Inicialización cuando se carga el documento
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                // Inicializar mapa
+                initializeMap();
+                
+                // Aplicar filtros iniciales
+                applyFilters();
+                
+                // Actualizar contador de favoritos
+                updateFavoriteCount();
+                
+                // Inicializar vista grid por defecto
+                changeView('grid');
+                
+                // Agregar event listeners para filtros
+                const filterElements = document.querySelectorAll('select[id]');
+                filterElements.forEach(element => {
+                    element.addEventListener('change', function() {
+                        updateFilters(this.id, this.value);
+                    });
+                });
+                
+            } catch (error) {
+                console.error('Error during initialization:', error);
+            }
+        });
+        
+        // Agregar estos estilos adicionales al CSS existente
+        const additionalStyles = `
+            .grid-layout {
+                grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            }
+            
+            .list-layout {
+                grid-template-columns: 1fr;
+            }
+            
+            .list-layout .property-card {
+                display: grid;
+                grid-template-columns: 300px 1fr;
+                gap: 1rem;
+            }
+            
+            .compact-layout {
+                grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            }
+            
+            .compact-layout .property-card {
+                font-size: 0.9em;
+            }
+        `;
+        
+        // Agregar estilos dinámicamente
+        const styleSheet = document.createElement('style');
+        styleSheet.textContent = additionalStyles;
+        document.head.appendChild(styleSheet);
+        
+        
+        // Función principal de renderizado
+        // Función de renderizado principal modificada
+        function renderPropertyCard(listing) {
+            const isFavorite = APP.favorites.has(listing.id);
+            const isSelected = APP.selectedProperty === listing.id;
+            
+            // Determinar el tipo de propiedad y normalizar a minúsculas
+            const propertyType = (listing.propertytypelabel || '').toLowerCase();
+            
+            // Seleccionar el template según la vista actual
+            switch(APP.currentView) {
+                case 'compact':
+                    return renderCompactView(listing, isFavorite, isSelected);
+                case 'list':
+                    return renderListView(listing, isFavorite, isSelected);
+                case 'grid':
+                default:
+                    return renderGridView(listing, isFavorite, isSelected, propertyType);
+            }
+        }
+        
+        // Vista Compacta
+        function renderCompactView(listing, isFavorite, isSelected) {
+            return `
+                <div class="property-card compact-card ${isSelected ? 'active' : ''}" 
+                    data-property-id="${listing.id}">
+                    <div class="property-image">
+                        <img src="${listing.imageUrl?.Uri800 || listing.photos?.[0]?.Uri800 || '/api/placeholder/400/300'}" 
+                             alt="${listing.propertytypelabel || 'Property'}"
+                             onerror="this.src='/api/placeholder/400/300'">
+                        <div class="price-tag">${formatPrice(listing.currentpricepublic)}</div>
+                        <button class="favorite-btn ${isFavorite ? 'active' : ''}" 
+                                onclick="event.stopPropagation(); toggleFavorite('${listing.id}')"
+                                data-property-id="${listing.id}">
+                            <i class="fa${isFavorite ? 's' : 'r'} fa-heart"></i>
+                        </button>
+                    </div>
+                    <div class="property-info">
+                        <div class="property-location">
+                            <i class="fas fa-map-marker-alt"></i> 
+                            ${listing.city || ''} ${listing.subdivisionname ? `- ${listing.subdivisionname}` : ''}
+                        </div>
+                        <h3 class="property-title">
+                            ${listing.streetadditionalinfo || listing.streetname || 'Property Details'}
+                        </h3>
+                        <div class="property-actions">
+                            <button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); selectProperty('${listing.id}')">
+                                <i class="fas fa-map-marker-alt"></i> Map
+                            </button>
+                            <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); showPropertyDetails('${listing.id}')">
+                                <i class="fas fa-info-circle"></i> Details
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Vista de Lista
+        function renderListView(listing, isFavorite, isSelected) {
+            return `
+                <div class="property-card list-card ${isSelected ? 'active' : ''}" 
+                    data-property-id="${listing.id}">
+                    <div class="property-image">
+                        <img src="${listing.imageUrl?.Uri800 || listing.photos?.[0]?.Uri800 || '/api/placeholder/400/300'}" 
+                             alt="${listing.propertytypelabel || 'Property'}"
+                             onerror="this.src='/api/placeholder/400/300'">
+                        <div class="property-type-label">
+                            <i class="fas fa-${listing.propertytypelabel?.toLowerCase().includes('house') ? 'home' : 
+                                        listing.propertytypelabel?.toLowerCase().includes('land') ? 'mountain' : 
+                                        'building'}"></i>
+                            ${listing.propertytypelabel}
+                        </div>
+                        <button class="favorite-btn ${isFavorite ? 'active' : ''}" 
+                                onclick="event.stopPropagation(); toggleFavorite('${listing.id}')"
+                                data-property-id="${listing.id}">
+                            <i class="fa${isFavorite ? 's' : 'r'} fa-heart"></i>
+                        </button>
+                    </div>
+                    <div class="property-info">
+                        <div class="list-content">
+                            <div class="list-header">
+                                <div class="property-location">
+                                    <i class="fas fa-map-marker-alt"></i> 
+                                    ${listing.city || ''} ${listing.subdivisionname ? `- ${listing.subdivisionname}` : ''}
+                                </div>
+                                <div class="price-tag">${formatPrice(listing.currentpricepublic)}</div>
+                            </div>
+                            <h3 class="property-title">
+                                ${listing.streetadditionalinfo || listing.streetname || 'Property Details'}
+                            </h3>
+                            <div class="property-specs">
+                                ${listing.bedstotal ? 
+                                    `<span class="spec-item"><i class="fas fa-bed"></i> ${listing.bedstotal} beds</span>` : ''}
+                                ${listing.bathroomstotaldecimal ? 
+                                    `<span class="spec-item"><i class="fas fa-bath"></i> ${listing.bathroomstotaldecimal} baths</span>` : ''}
+                                ${listing.buildingareatotal ? 
+                                    `<span class="spec-item"><i class="fas fa-ruler-combined"></i> ${listing.buildingareatotal} sq ft</span>` : ''}
+                            </div>
+                            <div class="property-description">
+                                ${listing.publicremarks ? listing.publicremarks.slice(0, 150) + '...' : 'No description available.'}
+                            </div>
+                        </div>
+                        <div class="property-actions">
+                            <button class="btn btn-outline-primary" onclick="event.stopPropagation(); selectProperty('${listing.id}')">
+                                <i class="fas fa-map-marker-alt"></i> View on Map
+                            </button>
+                            <button class="btn btn-primary" onclick="event.stopPropagation(); showPropertyDetails('${listing.id}')">
+                                <i class="fas fa-info-circle"></i> View Details
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Vista de Grid
+        function renderGridView(listing, isFavorite, isSelected, propertyType) {
+            return `
+                <div class="property-card grid-card ${propertyType}-card ${isSelected ? 'active' : ''}" 
+                    data-property-id="${listing.id}"
+                    data-property-type="${propertyType}">
+                    <div class="property-image">
+                        <img src="${listing.imageUrl?.Uri800 || listing.photos?.[0]?.Uri800 || '/api/placeholder/400/300'}" 
+                             alt="${listing.propertytypelabel || 'Property'}"
+                             onerror="this.src='/api/placeholder/400/300'">
+                        <div class="price-tag">${formatPrice(listing.currentpricepublic)}</div>
+                        <div class="property-type-label">
+                            <i class="fas fa-${propertyType.includes('house') ? 'home' : 
+                                            propertyType.includes('land') ? 'mountain' : 
+                                            'building'}"></i> 
+                            ${listing.propertytypelabel}
+                        </div>
+                        ${listing.yearbuilt ? `
+                            <div class="year-built-label">
+                                <i class="fas fa-calendar"></i> Built ${listing.yearbuilt}
+                            </div>
+                        ` : ''}
+                        <button class="favorite-btn ${isFavorite ? 'active' : ''}" 
+                                onclick="event.stopPropagation(); toggleFavorite('${listing.id}')"
+                                data-property-id="${listing.id}">
+                            <i class="fa${isFavorite ? 's' : 'r'} fa-heart"></i>
+                        </button>
+                    </div>
+                    <div class="property-info">
+                        <div class="property-location">
+                            <i class="fas fa-map-marker-alt"></i> 
+                            ${listing.city || ''} ${listing.subdivisionname ? `- ${listing.subdivisionname}` : ''}
+                        </div>
+                        <h3 class="property-title">
+                            ${listing.streetadditionalinfo || listing.streetname || 'Property Details'}
+                        </h3>
+                        <div class="property-specs">
+                            ${listing.bedstotal ? 
+                                `<span class="spec-item"><i class="fas fa-bed"></i> ${listing.bedstotal} beds</span>` : ''}
+                            ${listing.bathroomstotaldecimal ? 
+                                `<span class="spec-item"><i class="fas fa-bath"></i> ${listing.bathroomstotaldecimal} baths</span>` : ''}
+                            ${listing.buildingareatotal ? 
+                                `<span class="spec-item"><i class="fas fa-ruler-combined"></i> ${listing.buildingareatotal} sq ft</span>` : ''}
+                        </div>
+                        <div class="property-features">
+                            ${listing.poolfeatures ? `<span class="feature-tag"><i class="fas fa-swimming-pool"></i> Pool</span>` : ''}
+                            ${listing.patioandporchfeatures ? `<span class="feature-tag"><i class="fas fa-umbrella-beach"></i> Patio</span>` : ''}
+                            ${listing.electric ? `<span class="feature-tag"><i class="fas fa-bolt"></i> Electric</span>` : ''}
+                        </div>
+                        <div class="property-actions">
+                            <button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); selectProperty('${listing.id}')">
+                                <i class="fas fa-map-marker-alt"></i> View on Map
+                            </button>
+                            <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); showPropertyDetails('${listing.id}')">
+                                <i class="fas fa-info-circle"></i> Details
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Función para renderizar casas
+        function renderHouseCard(listing, isFavorite, isSelected) {
+            return `
+                <div class="property-card house-card ${APP.currentView}-view ${isSelected ? 'active' : ''}" 
+                    data-property-id="${listing.id}"
+                    data-property-type="house">
+                    <div class="property-image">
+                        <img src="${listing.imageUrl?.Uri800 || listing.photos?.[0]?.Uri800 || '/api/placeholder/400/300'}" 
+                             alt="${listing.propertytypelabel || 'House'}"
+                             onerror="this.src='/api/placeholder/400/300'">
+                        <div class="price-tag">${formatPrice(listing.currentpricepublic)}</div>
+                        <div class="property-type-label">
+                            <i class="fas fa-home"></i> ${listing.propertytypelabel}
+                        </div>
+                        ${listing.yearbuilt ? `
+                            <div class="year-built-label">
+                                <i class="fas fa-calendar"></i> Built ${listing.yearbuilt}
+                            </div>
+                        ` : ''}
+                        <button class="favorite-btn ${isFavorite ? 'active' : ''}" 
+                                onclick="event.stopPropagation(); toggleFavorite('${listing.id}')"
+                                data-property-id="${listing.id}">
+                            <i class="fa${isFavorite ? 's' : 'r'} fa-heart"></i>
+                        </button>
+                    </div>
+                    <div class="property-info">
+                        <div class="property-location">
+                            <i class="fas fa-map-marker-alt"></i> 
+                            ${listing.city || ''} ${listing.subdivisionname ? `- ${listing.subdivisionname}` : ''}
+                        </div>
+                        <h3 class="property-title">
+                            ${listing.streetadditionalinfo || listing.streetname || 'House Details'}
+                        </h3>
+                        <div class="property-specs">
+                            ${listing.bedstotal ? 
+                                `<span class="spec-item"><i class="fas fa-bed"></i> ${listing.bedstotal} beds</span>` : ''}
+                            ${listing.bathroomstotaldecimal ? 
+                                `<span class="spec-item"><i class="fas fa-bath"></i> ${listing.bathroomstotaldecimal} baths</span>` : ''}
+                            ${listing.buildingareatotal ? 
+                                `<span class="spec-item"><i class="fas fa-ruler-combined"></i> ${listing.buildingareatotal} sq ft</span>` : ''}
+                        </div>
+                        <div class="property-features">
+                            ${listing.poolfeatures ? `<span class="feature-tag"><i class="fas fa-swimming-pool"></i> Pool</span>` : ''}
+                            ${listing.patioandporchfeatures ? `<span class="feature-tag"><i class="fas fa-umbrella-beach"></i> Patio</span>` : ''}
+                            ${listing.electric ? `<span class="feature-tag"><i class="fas fa-bolt"></i> Electric</span>` : ''}
+                        </div>
+                        <div class="property-actions">
+                            <button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); selectProperty('${listing.id}')">
+                                <i class="fas fa-map-marker-alt"></i> View on Map
+                            </button>
+                            <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); showPropertyDetails('${listing.id}')">
+                                <i class="fas fa-info-circle"></i> Details
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Función para renderizar terrenos
+        function renderLandCard(listing, isFavorite, isSelected) {
+            return `
+                <div class="property-card land-card ${APP.currentView}-view ${isSelected ? 'active' : ''}" 
+                    data-property-id="${listing.id}"
+                    data-property-type="land">
+                    <div class="property-image">
+                        <img src="${listing.imageUrl?.Uri800 || listing.photos?.[0]?.Uri800 || '/api/placeholder/400/300'}" 
+                             alt="${listing.propertytypelabel || 'Land'}"
+                             onerror="this.src='/api/placeholder/400/300'">
+                        <div class="price-tag">${formatPrice(listing.currentpricepublic)}</div>
+                        <div class="property-type-label">
+                            <i class="fas fa-mountain"></i> ${listing.propertytypelabel}
+                        </div>
+                        <button class="favorite-btn ${isFavorite ? 'active' : ''}" 
+                                onclick="event.stopPropagation(); toggleFavorite('${listing.id}')"
+                                data-property-id="${listing.id}">
+                            <i class="fa${isFavorite ? 's' : 'r'} fa-heart"></i>
+                        </button>
+                    </div>
+                    <div class="property-info">
+                        <div class="property-location">
+                            <i class="fas fa-map-marker-alt"></i> 
+                            ${listing.city || ''} ${listing.subdivisionname ? `- ${listing.subdivisionname}` : ''}
+                        </div>
+                        <h3 class="property-title">
+                            ${listing.streetadditionalinfo || listing.streetname || 'Land Details'}
+                        </h3>
+                        <div class="property-specs">
+                            ${listing.lotsizedimensions ? 
+                                `<span class="spec-item"><i class="fas fa-ruler"></i> ${listing.lotsizedimensions}</span>` : ''}
+                            ${listing.mlsareamajor ? 
+                                `<span class="spec-item"><i class="fas fa-map"></i> ${listing.mlsareamajor}</span>` : ''}
+                        </div>
+                        <div class="property-features">
+                            ${listing.electric ? `<span class="feature-tag"><i class="fas fa-bolt"></i> Utilities</span>` : ''}
+                            ${listing.propertyclass ? `<span class="feature-tag"><i class="fas fa-info-circle"></i> ${listing.propertyclass}</span>` : ''}
+                        </div>
+                        <div class="property-actions">
+                            <button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); selectProperty('${listing.id}')">
+                                <i class="fas fa-map-marker-alt"></i> View on Map
+                            </button>
+                            <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); showPropertyDetails('${listing.id}')">
+                                <i class="fas fa-info-circle"></i> Details
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Función para renderizar condominios
+        function renderCondoCard(listing, isFavorite, isSelected) {
+            return `
+                <div class="property-card condo-card ${APP.currentView}-view ${isSelected ? 'active' : ''}" 
+                    data-property-id="${listing.id}"
+                    data-property-type="condo">
+                    <div class="property-image">
+                        <img src="${listing.imageUrl?.Uri800 || listing.photos?.[0]?.Uri800 || '/api/placeholder/400/300'}" 
+                             alt="${listing.propertytypelabel || 'Condo'}"
+                             onerror="this.src='/api/placeholder/400/300'">
+                        <div class="price-tag">${formatPrice(listing.currentpricepublic)}</div>
+                        <div class="property-type-label">
+                            <i class="fas fa-building"></i> ${listing.propertytypelabel}
+                        </div>
+                        <button class="favorite-btn ${isFavorite ? 'active' : ''}" 
+                                onclick="event.stopPropagation(); toggleFavorite('${listing.id}')"
+                                data-property-id="${listing.id}">
+                            <i class="fa${isFavorite ? 's' : 'r'} fa-heart"></i>
+                        </button>
+                    </div>
+                    <div class="property-info">
+                        <div class="property-location">
+                            <i class="fas fa-map-marker-alt"></i> 
+                            ${listing.city || ''} ${listing.subdivisionname ? `- ${listing.subdivisionname}` : ''}
+                        </div>
+                        <h3 class="property-title">
+                            ${listing.streetadditionalinfo || listing.streetname || 'Condo Details'}
+                        </h3>
+                        <div class="property-specs">
+                            ${listing.bedstotal ? 
+                                `<span class="spec-item"><i class="fas fa-bed"></i> ${listing.bedstotal} beds</span>` : ''}
+                            ${listing.bathroomstotaldecimal ? 
+                                `<span class="spec-item"><i class="fas fa-bath"></i> ${listing.bathroomstotaldecimal} baths</span>` : ''}
+                            ${listing.buildingareatotal ? 
+                                `<span class="spec-item"><i class="fas fa-ruler-combined"></i> ${listing.buildingareatotal} sq ft</span>` : ''}
+                        </div>
+                        <div class="property-features">
+                            ${listing.poolfeatures ? `<span class="feature-tag"><i class="fas fa-swimming-pool"></i> Pool Access</span>` : ''}
+                            ${listing.patioandporchfeatures ? `<span class="feature-tag"><i class="fas fa-umbrella-beach"></i> Balcony</span>` : ''}
+                        </div>
+                        <div class="property-actions">
+                            <button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); selectProperty('${listing.id}')">
+                                <i class="fas fa-map-marker-alt"></i> View on Map
+                            </button>
+                            <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); showPropertyDetails('${listing.id}')">
+                                <i class="fas fa-info-circle"></i> Details
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Función para renderizar otros tipos de propiedades
+        function renderDefaultCard(listing, isFavorite, isSelected) {
+            return `
+                <div class="property-card default-card ${APP.currentView}-view ${isSelected ? 'active' : ''}" 
+                    data-property-id="${listing.id}">
+                    <div class="property-image">
+                        <img src="${listing.imageUrl?.Uri800 || listing.photos?.[0]?.Uri800 || '/api/placeholder/400/300'}" 
+                             alt="${listing.propertytypelabel || 'Property'}"
+                             onerror="this.src='/api/placeholder/400/300'">
+                        <div class="price-tag">${formatPrice(listing.currentpricepublic)}</div>
+                        <div class="property-type-label">
+                            <i class="fas fa-home"></i> ${listing.propertytypelabel}
+                        </div>
+                        <button class="favorite-btn ${isFavorite ? 'active' : ''}" 
+                                onclick="event.stopPropagation(); toggleFavorite('${listing.id}')"
+                                data-property-id="${listing.id}">
+                            <i class="fa${isFavorite ? 's' : 'r'} fa-heart"></i>
+                        </button>
+                    </div>
+                    <div class="property-info">
+                        <div class="property-location">
+                            <i class="fas fa-map-marker-alt"></i> 
+                            ${listing.city || ''} ${listing.subdivisionname ? `- ${listing.subdivisionname}` : ''}
+                        </div>
+                        <h3 class="property-title">
+                            ${listing.streetadditionalinfo || listing.streetname || 'Property Details'}
+                        </h3>
+                        <div class="property-specs">
+                            ${listing.bedstotal ? 
+                                `<span class="spec-item"><i class="fas fa-bed"></i> ${listing.bedstotal} beds</span>` : ''}
+                            ${listing.bathroomstotaldecimal ? 
+                                `<span class="spec-item"><i class="fas fa-bath"></i> ${listing.bathroomstotaldecimal} baths</span>` : ''}
+                            ${listing.buildingareatotal ? 
+                                `<span class="spec-item"><i class="fas fa-ruler-combined"></i> ${listing.buildingareatotal} sq ft</span>` : ''}
+                        </div>
+                        <div class="property-actions">
+                            <button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); selectProperty('${listing.id}')">
+                                <i class="fas fa-map-marker-alt"></i> View on Map
+                            </button>
+                            <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); showPropertyDetails('${listing.id}')">
+                                <i class="fas fa-info-circle"></i> Details
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        
+        
+        // Función para actualizar el preview de la propiedad seleccionada
+        function updateSelectedPropertyPreview(property) {
+            const previewContainer = document.getElementById('selectedProperty');
+            if (!previewContainer) return;
+        
+            previewContainer.innerHTML = `
+                <div class="selected-property-content glass-morphism">
+                    <div class="preview-container">
+                        <div class="preview-image">
+                            <img src="${property.imageUrl?.Uri800 || property.photos?.[0]?.Uri800 || '/api/placeholder/800/600'}" 
+                                 alt="${property.propertytypelabel || 'Property'}"
+                                 class="preview-main-image"
+                                 onerror="this.src='/api/placeholder/800/600'">
+                        </div>
+                        <div class="preview-info">
+                            <div class="preview-type">
+                                <i class="fas fa-${property.propertytypelabel?.toLowerCase().includes('house') ? 'home' : 
+                                            property.propertytypelabel?.toLowerCase().includes('land') ? 'mountain' : 
+                                            'building'}"></i>
+                                ${property.propertytypelabel}
+                            </div>
+                            <div class="preview-price">
+                                ${formatPrice(property.currentpricepublic)}
+                            </div>
+                            <div class="preview-actions">
+                                <button onclick="showPropertyDetails('${property.id}')" class="btn btn-primary">
+                                    <i class="fas fa-info-circle"></i> View Details
+                                </button>
+                                <button onclick="toggleFavorite('${property.id}'); updateFavoriteButtons('${property.id}');" 
+                                        class="btn ${APP.favorites.has(property.id) ? 'btn-danger' : 'btn-outline-danger'}">
+                                    <i class="fa${APP.favorites.has(property.id) ? 's text-white' : 'r'} fa-heart"></i>
+                                    ${APP.favorites.has(property.id) ? 'Saved' : 'Save'}
+                                </button>
+                                <button onclick="contactAgent('${property.id}')" class="btn btn-outline-primary">
+                                    <i class="fas fa-envelope"></i> Contact
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        
+            previewContainer.classList.add('active');
+        
+            // Actualizar el botón de favorito en tiempo real
+            updateFavoriteButtons(property.id);
+        }
+        
+        // Función auxiliar para actualizar la imagen principal en el preview
+        function updatePreviewMainImage(newSrc) {
+            const mainImage = document.querySelector('.preview-main-image');
+            if (mainImage) {
+                mainImage.src = newSrc.replace('Uri300', 'Uri800');
+            }
+        }
+        
+        // Función para mostrar los detalles de la propiedad en un modal
+        function showPropertyDetails(propertyId) {
+            const property = SAMPLE_LISTINGS.find(p => p.id === propertyId);
+            if (!property) return;
+        
+            const modalContent = document.getElementById('propertyModalContent');
+            if (!modalContent) return;
+        
+            // Función auxiliar para parsear JSON strings de manera segura
+            const safeParseJSON = (jsonString) => {
+                try {
+                    return jsonString ? JSON.parse(jsonString) : null;
+                } catch (e) {
+                    return null;
+                }
+            };
+        
+            // Función para mostrar características si existen
+            const renderFeatures = (features, icon, title) => {
+                if (!features) return '';
+                const parsedFeatures = safeParseJSON(features);
+                if (!parsedFeatures) return '';
+        
+                return `
+                    <div class="feature-category">
+                        <h4><i class="fas fa-${icon}"></i> ${title}</h4>
+                        <div class="feature-list">
+                            ${Object.entries(parsedFeatures)
+                                .filter(([_, value]) => value)
+                                .map(([key]) => `
+                                    <div class="feature-item">
+                                        <i class="fas fa-check"></i> ${key}
+                                    </div>
+                                `).join('')}
+                        </div>
+                    </div>
+                `;
+            };
+        
+            modalContent.innerHTML = `
+                <div class="property-detail">
+                    <!-- Galería principal -->
+                    <div class="main-gallery glass-morphism">
+                        <div class="gallery-header">
+                            <span class="property-status ${property.majorchangetype?.toLowerCase().replace(/\s+/g, '-')}">
+                                ${property.majorchangetype || 'Active'}
+                            </span>
+                            <span class="listing-id">MLS# ${property.ListingId || 'N/A'}</span>
+                        </div>
+                        <img src="${property.photos?.[0]?.Uri1600 || property.photos?.[0]?.Uri800 || '/api/placeholder/800/600'}" 
+                             alt="${property.propertytypelabel}"
+                             class="main-detail-image">
+                        
+                        <div class="thumbnail-strip">
+                            ${property.photos?.slice(0, 6).map((photo, index) => `
+                                <div class="thumbnail-wrapper ${index === 0 ? 'active' : ''}" 
+                                     onclick="changeDetailMainImage('${photo.Uri1600 || photo.Uri800}', this)">
+                                    <img src="${photo.Uri300}" alt="Property view ${index + 1}">
+                                </div>
+                            `).join('')}
+                            ${property.photos?.length > 6 ? `
+                                <div class="more-photos">+${property.photos.length - 6} more</div>
+                            ` : ''}
+                        </div>
+                    </div>
+        
+                    <!-- Información principal -->
+                    <div class="detail-main-info glass-morphism">
+                        <div class="detail-header">
+                            <div class="detail-title">
+                                <div class="property-meta">
+                                    <span class="property-type">
+                                        <i class="fas fa-${property.propertytypelabel?.toLowerCase().includes('house') ? 'home' : 
+                                                        property.propertytypelabel?.toLowerCase().includes('land') ? 'mountain' : 
+                                                        'building'}"></i>
+                                        ${property.propertytypelabel}
+                                    </span>
+                                    ${property.yearbuilt ? `
+                                        <span class="year-built">
+                                            <i class="fas fa-calendar"></i> Built in ${property.yearbuilt}
+                                        </span>
+                                    ` : ''}
+                                </div>
+                                <h2>${property.streetadditionalinfo || property.streetname || 'Property Details'}</h2>
+                                <p class="location">
+                                    <i class="fas fa-map-marker-alt"></i> 
+                                    ${property.unparsedaddress || `${property.city} ${property.subdivisionname ? `- ${property.subdivisionname}` : ''}`}
+                                </p>
+                            </div>
+                            <div class="detail-price">
+                                <div class="price-tag">${formatPrice(property.currentpricepublic)}</div>
+                                <button onclick="toggleFavorite('${property.id}')" 
+                                        class="btn ${APP.favorites.has(property.id) ? 'btn-danger' : 'btn-outline-danger'}">
+                                    <i class="fa${APP.favorites.has(property.id) ? 's' : 'r'} fa-heart"></i>
+                                    ${APP.favorites.has(property.id) ? 'Saved' : 'Save'}
+                                </button>
+                            </div>
+                        </div>
+        
+                        <!-- Especificaciones clave -->
+                        <div class="detail-specs">
+                            ${property.bedstotal ? `
+                                <div class="spec-item">
+                                    <i class="fas fa-bed"></i>
+                                    <span class="value">${property.bedstotal}</span>
+                                    <span class="label">Bedrooms</span>
+                                </div>
+                            ` : ''}
+                            ${property.bathroomstotaldecimal ? `
+                                <div class="spec-item">
+                                    <i class="fas fa-bath"></i>
+                                    <span class="value">${property.bathroomstotaldecimal}</span>
+                                    <span class="label">Bathrooms</span>
+                                </div>
+                            ` : ''}
+                            ${property.buildingareatotal ? `
+                                <div class="spec-item">
+                                    <i class="fas fa-ruler-combined"></i>
+                                    <span class="value">${property.buildingareatotal}</span>
+                                    <span class="label">Sq Ft</span>
+                                </div>
+                            ` : ''}
+                            ${property.lotsizedimensions ? `
+                                <div class="spec-item">
+                                    <i class="fas fa-vector-square"></i>
+                                    <span class="value">${property.lotsizedimensions}</span>
+                                    <span class="label">Lot Size</span>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+        
+                    <!-- Descripción -->
+                    <div class="detail-description glass-morphism">
+                        <h3>Description</h3>
+                        <p>${property.publicremarks || 'No description available.'}</p>
+                    </div>
+        
+                    <!-- Detalles de construcción -->
+                    ${property.propertyclass === 'Residential' ? `
+                        <div class="construction-details glass-morphism">
+                            <h3>Construction Details</h3>
+                            <div class="details-grid">
+                                ${property.architecturalstyle ? `
+                                    <div class="detail-item">
+                                        <span class="label">Style:</span>
+                                        <span class="value">${Object.keys(safeParseJSON(property.architecturalstyle) || {}).join(', ')}</span>
+                                    </div>
+                                ` : ''}
+                                ${property.yearbuilt ? `
+                                    <div class="detail-item">
+                                        <span class="label">Year Built:</span>
+                                        <span class="value">${property.yearbuilt}</span>
+                                    </div>
+                                ` : ''}
+                                ${property.roomstotal ? `
+                                    <div class="detail-item">
+                                        <span class="label">Total Rooms:</span>
+                                        <span class="value">${property.roomstotal}</span>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                    ` : ''}
+        
+                    <!-- Ubicación -->
+                    <div class="detail-location glass-morphism">
+                        <h3>Location</h3>
+                        <div id="detailMap" style="height: 400px; margin-bottom: 1rem;"></div>
+                        <div class="location-details">
+                            <div class="location-item">
+                                <i class="fas fa-map-marker-alt"></i>
+                                <div class="location-info">
+                                    <span class="label">Address</span>
+                                    <span class="value">${property.unparsedaddress}</span>
+                                </div>
+                            </div>
+                            ${property.postalcode ? `
+                                <div class="location-item">
+                                    <i class="fas fa-mail-bulk"></i>
+                                    <div class="location-info">
+                                        <span class="label">Postal Code</span>
+                                        <span class="value">${property.postalcode}</span>
+                                    </div>
+                                </div>
+                            ` : ''}
+                            <div class="location-item">
+                                <i class="fas fa-compass"></i>
+                                <div class="location-info">
+                                    <span class="label">Area</span>
+                                    <span class="value">${property.mlsareamajor}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+        
+                    <!-- Características y amenidades -->
+                    <div class="detail-features glass-morphism">
+                        <h3>Features & Amenities</h3>
+                        <div class="features-grid">
+                            ${renderFeatures(property.electric, 'bolt', 'Electrical')}
+                            ${renderFeatures(property.poolfeatures, 'swimming-pool', 'Pool Features')}
+                            ${renderFeatures(property.exteriorfeatures, 'home', 'Exterior Features')}
+                            ${renderFeatures(property.interiorfeatures, 'door-open', 'Interior Features')}
+                            ${renderFeatures(property.kitchenappliances, 'utensils', 'Kitchen Appliances')}
+                            ${renderFeatures(property.patioandporchfeatures, 'umbrella-beach', 'Outdoor Living')}
+                        </div>
+                    </div>
+        
+                    <!-- Botones de acción -->
+                    <div class="detail-actions glass-morphism">
+                        <button class="btn btn-primary" onclick="contactAgent('${property.id}')">
+                            <i class="fas fa-envelope"></i> Contact Agent
+                        </button>
+                        <button class="btn btn-outline-primary" onclick="scheduleViewing('${property.id}')">
+                            <i class="fas fa-calendar-alt"></i> Schedule Viewing
+                        </button>
+                        <a href="https://www.google.com/maps/dir/?api=1&destination=${property.latitude},${property.longitude}" 
+                           class="btn btn-outline-secondary" 
+                           target="_blank">
+                            <i class="fas fa-directions"></i> Get Directions
+                        </a>
+                    </div>
+                </div>
+            `;
+        
+            // Inicializar el mapa de detalle
+            setTimeout(() => {
+                try {
+                    const detailMap = L.map('detailMap').setView([property.latitude, property.longitude], 15);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors'
+                    }).addTo(detailMap);
+        
+                    const marker = L.marker([property.latitude, property.longitude]).addTo(detailMap);
+                    marker.bindPopup(`
+                        <b>${property.propertytypelabel}</b><br>
+                        ${property.unparsedaddress}
+                    `).openPopup();
+                } catch (error) {
+                    console.error('Error initializing detail map:', error);
+                }
+            }, 300);
+        
+            const propertyModal = new bootstrap.Modal(document.getElementById('propertyModal'));
+            propertyModal.show();
+        }
+        
+        // Función auxiliar para cambiar la imagen principal en la vista detallada
+        function changeDetailMainImage(newSrc, thumbnailElement) {
+            const mainImage = document.querySelector('.main-detail-image');
+            if (mainImage) {
+                mainImage.src = newSrc;
+            }
+        
+            // Actualizar thumbnail activo
+            document.querySelectorAll('.thumbnail-wrapper').forEach(thumb => thumb.classList.remove('active'));
+            thumbnailElement.classList.add('active');
+        }
+        
+        // Función para cambiar la imagen principal en la galería
+        function changeMainImage(thumbnail, newSrc) {
+            // Actualizar imagen principal
+            const mainImage = document.querySelector('.main-gallery-image');
+            mainImage.src = newSrc;
+            
+            // Actualizar estado activo de miniaturas
+            document.querySelectorAll('.thumbnail').forEach(thumb => thumb.classList.remove('active'));
+            thumbnail.classList.add('active');
+        }
+        
+        // Función para contactar al agente
+        function contactAgent(propertyId) {
+            const property = SAMPLE_LISTINGS.find(p => p.id === propertyId);
+            if (!property) return;
+        
+            const subject = `Inquiry about ${property.propertytypelabel} in ${property.city}`;
+            const body = `I am interested in learning more about the property located at ${property.streetadditionalinfo || property.streetname}.\n\nProperty Details:\n- Price: ${formatPrice(property.currentpricepublic)}\n- Type: ${property.propertytypelabel}\n- Location: ${property.city}`;
+        
+            window.location.href = `mailto:agent@example.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        }
+        
+        
+        
+        // Funciones auxiliares
+        function formatPrice(price) {
+            if (!price) return 'Price on request';
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD',
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 0
+            }).format(price);
+        }
+        
+        function showLoadingOverlay() {
+            const overlay = document.querySelector('.loading-overlay');
+            if (overlay) {
+                overlay.style.display = 'flex';
+            }
+        }
+        
+        function hideLoadingOverlay() {
+            const overlay = document.querySelector('.loading-overlay');
+            if (overlay) {
+                overlay.style.display = 'none';
+            }
+        }
+        
+        // Funciones de manejo de filtros
+        function updateFilters(filterType, value) {
+            if (!value || value === '') {
+                delete APP.activeFilters[filterType];
+            } else {
+                APP.activeFilters[filterType] = value;
+            }
+            
+            updateFilterTags();
+            applyFilters();
+        }
+        
+        function updateFilterTags() {
+            const container = document.getElementById('filterTags');
+            if (!container) return;
+        
+            const tags = Object.entries(APP.activeFilters).map(([type, value]) => {
+                let displayValue = value;
+                
+                // Formatear valores para mejor visualización
+                if (type === 'priceRange') {
+                    const [min, max] = value.split('-').map(Number);
+                    displayValue = max ? 
+                        `${formatPrice(min)} - ${formatPrice(max)}` : 
+                        `${formatPrice(min)}+`;
+                }
+                
+                return createFilterTag(type, displayValue);
+            });
+        
+            container.innerHTML = tags.join('');
+        }
+        
+        function createFilterTag(filterType, value) {
+            const displayType = filterType.charAt(0).toUpperCase() + filterType.slice(1)
+                .replace(/([A-Z])/g, ' $1')
+                .trim();
+            
+            return `
+                <span class="filter-tag">
+                    ${displayType}: ${value}
+                    <button class="remove-filter" onclick="removeFilter('${filterType}')">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </span>
+            `;
+        }
+        
+        function removeFilter(filterType) {
+            const select = document.getElementById(filterType);
+            if (select) {
+                select.value = '';
+            }
+            delete APP.activeFilters[filterType];
+            updateFilterTags();
+            applyFilters();
+        }
+        
+        function selectProperty(propertyId) {
+            APP.selectedProperty = propertyId;
+        
+            // Actualizar UI
+            document.querySelectorAll('.property-card').forEach(card => {
+                card.classList.toggle('active', card.dataset.propertyId === propertyId);
+            });
+        
+            // Actualizar marcadores
+            APP.markers.forEach(marker => {
+                const markerElement = marker.getElement();
+                if (markerElement) {
+                    const markerDiv = markerElement.querySelector('.map-marker'); // Cambiado a .map-marker
+                    if (markerDiv) {
+                        markerDiv.classList.toggle('active', marker.propertyId === propertyId);
+                        
+                        // Ajustar z-index para que el marcador activo esté siempre encima
+                        if (marker.propertyId === propertyId) {
+                            markerElement.style.zIndex = 1000;
+                        } else {
+                            markerElement.style.zIndex = 1;
+                        }
+                    }
+                }
+            });
+        
+            // Actualizar preview
+            const property = SAMPLE_LISTINGS.find(p => p.id === propertyId);
+            if (property) {
+                updateSelectedPropertyPreview(property);
+        
+                // Si se encuentra el marcador, actualizarlo y centrarlo
+                const marker = APP.markers.find(m => m.propertyId === propertyId);
+                if (marker && APP.map) {
+                    const latLng = marker.getLatLng();
+                    
+                    // Centrar el mapa con un pequeño offset para mejor visualización
+                    APP.map.flyTo([latLng.lat - 0.007, latLng.lng], 15, {
+                        animate: true,
+                        duration: 0.5
+                    });
+        
+                    // Asegurar que el marcador esté visible
+                    const markerElement = marker.getElement();
+                    if (markerElement) {
+                        markerElement.scrollIntoView({
+                            behavior: 'smooth',
+                            block: 'center'
+                        });
+                    }
+                }
+            }
+        }
+        
+        // Función auxiliar para actualizar el estado de los marcadores
+        function updateMarkerStates() {
+            APP.markers.forEach(marker => {
+                const markerElement = marker.getElement();
+                if (markerElement) {
+                    const markerDiv = markerElement.querySelector('.map-marker');
+                    if (markerDiv) {
+                        const isActive = marker.propertyId === APP.selectedProperty;
+                        markerDiv.classList.toggle('active', isActive);
+                        markerElement.style.zIndex = isActive ? 1000 : 1;
+                    }
+                }
+            });
+        }
+        
+        // Funciones de inicialización del mapa
+        function initializeMap() {
+            try {
+                const mapElement = document.getElementById('map');
+                if (!mapElement) return;
+        
+                // Crear mapa con estilo personalizado
+                APP.map = L.map('map', {
+                    zoomControl: false,
+                    scrollWheelZoom: false
+                }).setView([24.1636, -110.3131], 10);
+        
+                // Añadir controles de zoom
+                L.control.zoom({
+                    position: 'bottomright'
+                }).addTo(APP.map);
+        
+                // Añadir capa de mapa
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                    attribution: '©OpenStreetMap, ©CartoDB',
+                    subdomains: 'abcd',
+                    maxZoom: 19
+                }).addTo(APP.map);
+        
+                // Manejar interacciones del mapa
+                APP.map.on('click', () => {
+                    if (!APP.map.scrollWheelZoom.enabled()) {
+                        APP.map.scrollWheelZoom.enable();
+                    }
+                });
+        
+                APP.map.on('mouseout', () => {
+                    APP.map.scrollWheelZoom.disable();
+                });
+        
+                // Inicializar marcadores
+                updateMapMarkers();
+        
+            } catch (error) {
+                console.error('Error initializing map:', error);
+            }
+        }
+        
+        // Función para reiniciar filtros
+        function resetFilters() {
+            APP.activeFilters = {};
+            
+            // Resetear todos los selects
+            document.querySelectorAll('select[id]').forEach(select => {
+                select.value = '';
+            });
+            
+            updateFilterTags();
+            applyFilters();
+        }
+        
+        // Event Listeners para controles de vista
+        document.addEventListener('DOMContentLoaded', () => {
+            // Inicialización principal
+            //initializeMap();
+            updateFavoriteCount();
+            changeView('grid');
+        
+            // Event listeners para filtros
+            document.querySelectorAll('select[id]').forEach(select => {
+                select.addEventListener('change', function() {
+                    updateFilters(this.id, this.value);
+                });
+            });
+        
+            // Event listener para búsqueda
+            const searchForm = document.querySelector('form');
+            if (searchForm) {
+                searchForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    applyFilters();
+                });
+            }
+        
+            // Event listener para botón de reset
+            const resetButton = document.querySelector('.btn-reset');
+            if (resetButton) {
+                resetButton.addEventListener('click', resetFilters);
+            }
+        
+            // Event listener para cambios de vista
+            document.querySelectorAll('.view-controls-container .btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    const viewType = this.getAttribute('data-view');
+                    if (viewType) {
+                        changeView(viewType);
+                    }
+                });
+            });
+        
+            // Event listener para cierre de modal
+            const propertyModal = document.getElementById('propertyModal');
+            if (propertyModal) {
+                propertyModal.addEventListener('hidden.bs.modal', function() {
+                    const modalContent = this.querySelector('.modal-body');
+                    if (modalContent) {
+                        modalContent.innerHTML = '';
+                    }
+                });
+            }
+        
+            // Inicializar tooltips de Bootstrap
+            const tooltipTriggerList = [].slice.call(
+                document.querySelectorAll('[data-bs-toggle="tooltip"]')
+            );
+            tooltipTriggerList.map(tooltipTriggerEl => 
+                new bootstrap.Tooltip(tooltipTriggerEl)
+            );
+        });
+        
+        // Event listener para cambios de tamaño de ventana
+        window.addEventListener('resize', () => {
+            if (APP.map) {
+                APP.map.invalidateSize();
+                
+                if (APP.markers.length > 0) {
+                    const group = L.featureGroup(APP.markers);
+                    APP.map.fitBounds(group.getBounds().pad(0.1));
+                }
+            }
+        });
+        
+        // Manejar errores de carga de imágenes
+        document.addEventListener('error', function(e) {
+            if (e.target.tagName.toLowerCase() === 'img') {
+                e.target.src = '/api/placeholder/400/300';
+            }
+        }, true);
+        
+    </script>
+    <!--end db.js code-->
+</body>
+</html>
