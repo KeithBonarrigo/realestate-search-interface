@@ -510,7 +510,9 @@ const fetchProperties = async (req) => {
         // Price Range Filter - Parse "min-max" format
         if (priceRange) {
             const [minPrice, maxPrice] = priceRange.split('-');
-            query += ` AND listprice BETWEEN ${minPrice} AND ${maxPrice || '999999999'}`;
+            //query += ` AND listprice BETWEEN ${minPrice} AND ${maxPrice || '999999999'}`;
+            query += ` AND currentpricepublic BETWEEN ${minPrice} AND ${maxPrice || '999999999'}`;
+
         }
 
         // Bedroom/Bathroom Filters (minimum values)
@@ -524,6 +526,9 @@ const fetchProperties = async (req) => {
         if(priceReduced) query += " AND majorchangetype = 'Price Reduced'";
         if(openHouse) query += " AND openhousescount > 0";
         if(virtualTour) query += " AND virtualtourcount > 0";
+
+        // Sort by price high to low
+        query += " ORDER BY currentpricepublic DESC";
 
         // Limit results to prevent overwhelming responses
         query += " LIMIT 50";
