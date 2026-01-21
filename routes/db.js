@@ -520,6 +520,21 @@ async function formatListingsRaw(req, listingData, client) {
         listing.vTours = vToursCheck;
         listing.vrTours = vToursCheck;  // Duplicate property for compatibility
 
+        // =====================================================================
+        // STEP 4: FETCH OR RETRIEVE OPEN HOUSES
+        // =====================================================================
+        let openHouseValueToCheck = [];
+        if(detailsInDb) openHouseValueToCheck = photoResult.rows[0].open_houses;
+
+        // Use helper function to check cache and fetch if needed
+        let openHousesCheck = await checkTourAndOpenDetails(listing, listing.openhousescount, openHouseValueToCheck, detailsInDb, client, 'openHouses');
+        listing.openhouses = openHousesCheck;
+
+        console.log(`🏠 ${listing.id} - openhousescount: ${listing.openhousescount}, openhouses array length: ${listing.openhouses?.length || 0}`);
+        if (listing.openhouses && listing.openhouses.length > 0) {
+            console.log(`🏠 ${listing.id} - First open house:`, JSON.stringify(listing.openhouses[0]));
+        }
+
         // Log results for debugging
         if( listing.photos){
             console.log(`${listing.id} - data raw photos:`);
@@ -529,7 +544,16 @@ async function formatListingsRaw(req, listingData, client) {
             console.log(`${listing.id} - data raw vTours:`);
             console.log(listing.vTours.length);
         }
+        if(listing.openhouses){
+            console.log(`${listing.id} - data raw openhouses:`);
+            console.log(listing.openhouses.length);
+        }
     }
+
+    console.log(`📦 Returning ${listingData.length} listings. Open house data summary:`);
+    listingData.forEach(l => {
+        console.log(`   - ${l.id}: openhousescount=${l.openhousescount}, openhouses=${l.openhouses?.length || 0}`);
+    });
 
     return listingData;
 }
@@ -581,8 +605,13 @@ async function checkTourAndOpenDetails(listing, listingFieldToCheck, rawToCheck,
                     fieldToUpdate = 'virtual_tours';
                     fieldTimestampToUpdate = 'virtual_tours_edited';
                 break;
-                case "vTours":
-                    dataFromApi = await getVrTours(listing.id); //call API
+                case "openHouses":
+                    console.log(`🏠 ${listing.id} - CALLING OPENHOUSE API`);
+
+                    dataFromApi = await getOpenHouses(listing.id); //call API
+                    console.log(`🏠 ${listing.id} - CALLING OPENHOUSE API RESULT:`);
+                    console.log(dataFromApi);
+
                     fieldToUpdate = 'open_houses';
                     fieldTimestampToUpdate = 'open_houses_edited';
                 break;

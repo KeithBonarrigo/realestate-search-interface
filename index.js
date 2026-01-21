@@ -503,7 +503,9 @@ const fetchProperties = async (req) => {
                 query += allIncludeLocations[location].join('');
             } else {
                 // Exact match for specific locations
-                query += ` AND mlsareamajor = '${location}'`;
+                //query += ` AND mlsareamajor = '${location}'`;
+                query += ` AND mlsareamajor LIKE '%${location}%'`;
+
             }
         }
 
