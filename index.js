@@ -434,6 +434,449 @@ app.post('/searchOrig', async (req, res) => {
     }
 });
 
+/**
+ * POST /test-location-match - Test endpoint for areaCitySubdivisionMatch
+ * -----------------------------------------------------------------------------
+ * Use this endpoint to test how user location input gets matched.
+ *
+ * REQUEST BODY (JSON):
+ * {
+ *   "location": "Cabo"  // or "Pedregal", "La Paz", "Pedrigal" (misspelled), etc.
+ * }
+ *
+ * RESPONSE (JSON):
+ * {
+ *   success: true,
+ *   input: "Cabo",
+ *   matchResult: { ... },  // The result from areaCitySubdivisionMatch
+ *   suggestedQuery: { ... } // How fetchProperties would use this data
+ * }
+ */
+app.post('/test-location-match', async (req, res) => {
+    console.log("-------✅ IN index.js - /test-location-match endpoint ----------------------");
+    const { location } = req.body;
+
+    console.log(`Testing location match for: "${location}"`);
+
+    try {
+        const matchResult = await areaCitySubdivisionMatch(location, client);
+
+        // Build what the suggested SQL filter would look like
+        let suggestedQuery = {
+            description: '',
+            sqlSnippet: ''
+        };
+
+        if (matchResult === null) {
+            suggestedQuery.description = 'No match found - would fall back to LIKE search on all fields';
+            suggestedQuery.sqlSnippet = `AND (city LIKE '%${location}%' OR mlsareamajor LIKE '%${location}%' OR subdivisionname LIKE '%${location}%')`;
+        } else if (matchResult.ambiguous && matchResult.matches) {
+            // Multiple matches - search across all matched values
+            if (matchResult.matchedField === 'city') {
+                const cityList = matchResult.matches.map(c => `'${c}'`).join(', ');
+                suggestedQuery.description = `Ambiguous city match - would search across ${matchResult.matches.length} cities`;
+                suggestedQuery.sqlSnippet = `AND city IN (${cityList})`;
+            } else if (matchResult.matchedField === 'mlsareamajor') {
+                const areaList = matchResult.matches.map(a => `'${a}'`).join(', ');
+                suggestedQuery.description = `Ambiguous area match - would search across ${matchResult.matches.length} areas`;
+                suggestedQuery.sqlSnippet = `AND mlsareamajor IN (${areaList})`;
+            } else {
+                const subdivList = matchResult.matches.map(s => `'${s.value || s}'`).join(', ');
+                suggestedQuery.description = `Ambiguous subdivision match - would search across ${matchResult.matches.length} subdivisions`;
+                suggestedQuery.sqlSnippet = `AND subdivisionname IN (${subdivList})`;
+            }
+        } else {
+            // Clear match - use precise filters
+            let filters = [];
+            if (matchResult.city) filters.push(`city = '${matchResult.city}'`);
+            if (matchResult.mlsareamajor) filters.push(`mlsareamajor = '${matchResult.mlsareamajor}'`);
+            if (matchResult.subdivision) filters.push(`subdivisionname = '${matchResult.subdivision}'`);
+
+            suggestedQuery.description = `Clear ${matchResult.matchType} match on ${matchResult.matchedField}`;
+            suggestedQuery.sqlSnippet = filters.length > 0 ? 'AND ' + filters.join(' AND ') : 'No filters';
+        }
+
+        res.status(200).json({
+            success: true,
+            input: location,
+            matchResult,
+            suggestedQuery
+        });
+
+    } catch (err) {
+        console.error('Error in location match test:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Error testing location match',
+            error: err.message
+        });
+    }
+});
+
+// =============================================================================
+// LOCATION MATCHING HELPER FUNCTION
+// =============================================================================
+
+/**
+ * Location data cache - loaded once from database
+ * Contains all valid combinations of city, mlsareamajor, and subdivisionname
+ */
+let locationLookupCache = null;
+
+/**
+ * levenshteinDistance - Calculate edit distance between two strings
+ * -----------------------------------------------------------------------------
+ * Classic dynamic programming implementation of Levenshtein distance.
+ * Used for fuzzy matching to handle user typos/misspellings.
+ *
+ * @param {string} str1 - First string
+ * @param {string} str2 - Second string
+ * @returns {number} Number of single-character edits needed to transform str1 to str2
+ */
+function levenshteinDistance(str1, str2) {
+    const m = str1.length;
+    const n = str2.length;
+
+    // Create a matrix of distances
+    const dp = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+
+    // Initialize base cases
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+    // Fill in the rest of the matrix
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            if (str1[i - 1] === str2[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1];
+            } else {
+                dp[i][j] = 1 + Math.min(
+                    dp[i - 1][j],     // deletion
+                    dp[i][j - 1],     // insertion
+                    dp[i - 1][j - 1]  // substitution
+                );
+            }
+        }
+    }
+
+    return dp[m][n];
+}
+
+/**
+ * loadLocationLookupData - Load location combinations from database
+ * -----------------------------------------------------------------------------
+ * Queries distinct city/mlsareamajor/subdivision combinations from mls_properties.
+ * Results are cached in memory for subsequent calls.
+ *
+ * @param {Object} dbClient - PostgreSQL client
+ * @returns {Array} Array of {city, mlsareamajor, subdivision} objects
+ */
+async function loadLocationLookupData(dbClient) {
+    if (locationLookupCache) {
+        return locationLookupCache;
+    }
+
+    console.log("-------✅ Loading location lookup data from database...");
+
+    const query = `
+        SELECT DISTINCT city, mlsareamajor, subdivisionname as subdivision
+        FROM mls_properties
+        WHERE city IS NOT NULL OR mlsareamajor IS NOT NULL OR subdivisionname IS NOT NULL
+        ORDER BY city, mlsareamajor, subdivisionname
+    `;
+
+    const result = await dbClient.query(query);
+    locationLookupCache = result.rows;
+
+    console.log(`-------✅ Loaded ${locationLookupCache.length} location combinations`);
+    return locationLookupCache;
+}
+
+/**
+ * areaCitySubdivisionMatch - Match user input to location fields
+ * =============================================================================
+ * Attempts to match a user's location input to city, mlsareamajor, or subdivision
+ * using a combination of exact matching, partial matching, and fuzzy matching.
+ *
+ * MATCHING PRIORITY:
+ * 1. Exact match (case-insensitive)
+ * 2. Starts-with match (input is prefix of a value)
+ * 3. Contains match (input is substring of a value)
+ * 4. Fuzzy match (Levenshtein distance within threshold)
+ *
+ * HIERARCHY LOGIC:
+ * - If subdivision matched: return city + mlsareamajor + subdivision
+ * - If mlsareamajor matched: return city + mlsareamajor (subdivision = null)
+ * - If city matched: return city only (mlsareamajor + subdivision = null)
+ * - If ambiguous: return all candidates with ambiguous flag
+ * - If no match: return null
+ *
+ * @param {string} userInput - The location string from user
+ * @param {Object} dbClient - PostgreSQL client for database queries
+ * @returns {Object|null} Match result object or null if no match
+ *
+ * RETURN OBJECT STRUCTURE:
+ * {
+ *   city: string|null,
+ *   mlsareamajor: string|null,
+ *   subdivision: string|null,
+ *   matchType: 'exact'|'startsWith'|'contains'|'fuzzy',
+ *   matchedField: 'city'|'mlsareamajor'|'subdivision',
+ *   confidence: number (0-1),
+ *   ambiguous: boolean,
+ *   matches: array (if ambiguous, contains all matching candidates)
+ * }
+ */
+async function areaCitySubdivisionMatch(userInput, dbClient) {
+    console.log(`-------✅ areaCitySubdivisionMatch called with: "${userInput}"`);
+
+    if (!userInput || typeof userInput !== 'string' || userInput.trim() === '') {
+        console.log("-------⚠️ Empty or invalid input");
+        return null;
+    }
+
+    const normalized = userInput.toLowerCase().trim();
+    const lookupData = await loadLocationLookupData(dbClient);
+
+    // Track all matches found
+    const matches = {
+        exact: { city: [], mlsareamajor: [], subdivision: [] },
+        startsWith: { city: [], mlsareamajor: [], subdivision: [] },
+        contains: { city: [], mlsareamajor: [], subdivision: [] },
+        fuzzy: { city: [], mlsareamajor: [], subdivision: [] }
+    };
+
+    // Get unique values for each field
+    const uniqueCities = [...new Set(lookupData.map(r => r.city).filter(Boolean))];
+    const uniqueAreas = [...new Set(lookupData.map(r => r.mlsareamajor).filter(Boolean))];
+    const uniqueSubdivisions = [...new Set(lookupData.map(r => r.subdivision).filter(Boolean))];
+
+    // Fuzzy match threshold (max edit distance allowed)
+    const FUZZY_THRESHOLD = 3;
+
+    // Helper function to check matches for a field
+    const checkMatches = (values, fieldName) => {
+        for (const value of values) {
+            if (!value) continue;
+            const valueLower = value.toLowerCase();
+
+            // Exact match
+            if (valueLower === normalized) {
+                matches.exact[fieldName].push(value);
+            }
+            // Starts with
+            else if (valueLower.startsWith(normalized)) {
+                matches.startsWith[fieldName].push(value);
+            }
+            // Contains
+            else if (valueLower.includes(normalized) || normalized.includes(valueLower)) {
+                matches.contains[fieldName].push(value);
+            }
+            // Fuzzy match (only for inputs >= 4 chars to avoid too many false positives)
+            else if (normalized.length >= 4) {
+                const distance = levenshteinDistance(normalized, valueLower);
+                // Scale threshold based on word length
+                const adjustedThreshold = Math.min(FUZZY_THRESHOLD, Math.floor(valueLower.length / 3));
+                if (distance <= adjustedThreshold) {
+                    matches.fuzzy[fieldName].push({ value, distance });
+                }
+            }
+        }
+    };
+
+    // Check all three fields
+    checkMatches(uniqueCities, 'city');
+    checkMatches(uniqueAreas, 'mlsareamajor');
+    checkMatches(uniqueSubdivisions, 'subdivision');
+
+    // Helper to find the full record(s) for a matched value
+    const findRecordsForValue = (fieldName, value) => {
+        return lookupData.filter(r => {
+            const fieldValue = r[fieldName];
+            return fieldValue && fieldValue.toLowerCase() === value.toLowerCase();
+        });
+    };
+
+    // Process matches in priority order: exact > startsWith > contains > fuzzy
+    // And field priority: subdivision > mlsareamajor > city (most specific first for exact)
+    // But for partial matches, city first (broadest)
+
+    const buildResult = (matchType, fieldName, value, confidence, allMatches = null) => {
+        const records = findRecordsForValue(fieldName, value);
+
+        // If multiple records have this value, we need to handle that
+        const uniqueParents = {
+            cities: [...new Set(records.map(r => r.city).filter(Boolean))],
+            areas: [...new Set(records.map(r => r.mlsareamajor).filter(Boolean))],
+            subdivisions: [...new Set(records.map(r => r.subdivision).filter(Boolean))]
+        };
+
+        let result = {
+            city: null,
+            mlsareamajor: null,
+            subdivision: null,
+            matchType,
+            matchedField: fieldName,
+            matchedValue: value,
+            confidence,
+            ambiguous: false,
+            inputReceived: userInput
+        };
+
+        switch (fieldName) {
+            case 'subdivision':
+                result.subdivision = value;
+                // If subdivision maps to single city/area, populate those
+                if (uniqueParents.cities.length === 1) result.city = uniqueParents.cities[0];
+                if (uniqueParents.areas.length === 1) result.mlsareamajor = uniqueParents.areas[0];
+                // If multiple parents, note ambiguity
+                if (uniqueParents.cities.length > 1 || uniqueParents.areas.length > 1) {
+                    result.ambiguous = true;
+                    result.possibleCities = uniqueParents.cities;
+                    result.possibleAreas = uniqueParents.areas;
+                }
+                break;
+
+            case 'mlsareamajor':
+                result.mlsareamajor = value;
+                // Find the city for this area
+                if (uniqueParents.cities.length === 1) result.city = uniqueParents.cities[0];
+                if (uniqueParents.cities.length > 1) {
+                    result.ambiguous = true;
+                    result.possibleCities = uniqueParents.cities;
+                }
+                break;
+
+            case 'city':
+                result.city = value;
+                // City is broadest - don't populate children
+                break;
+        }
+
+        // If we have multiple matches at this level, flag as ambiguous
+        if (allMatches && allMatches.length > 1) {
+            result.ambiguous = true;
+            result.matches = allMatches;
+        }
+
+        return result;
+    };
+
+    // === EXACT MATCHES (highest priority) ===
+    // Check subdivision first (most specific)
+    if (matches.exact.subdivision.length === 1) {
+        return buildResult('exact', 'subdivision', matches.exact.subdivision[0], 1.0);
+    }
+    if (matches.exact.subdivision.length > 1) {
+        return buildResult('exact', 'subdivision', matches.exact.subdivision[0], 1.0, matches.exact.subdivision);
+    }
+
+    // Then mlsareamajor
+    if (matches.exact.mlsareamajor.length === 1) {
+        return buildResult('exact', 'mlsareamajor', matches.exact.mlsareamajor[0], 1.0);
+    }
+    if (matches.exact.mlsareamajor.length > 1) {
+        return buildResult('exact', 'mlsareamajor', matches.exact.mlsareamajor[0], 1.0, matches.exact.mlsareamajor);
+    }
+
+    // Then city
+    if (matches.exact.city.length === 1) {
+        return buildResult('exact', 'city', matches.exact.city[0], 1.0);
+    }
+    if (matches.exact.city.length > 1) {
+        return buildResult('exact', 'city', matches.exact.city[0], 1.0, matches.exact.city);
+    }
+
+    // === STARTS WITH MATCHES ===
+    // For partial matches, prefer city (broader search)
+    const allStartsWith = [
+        ...matches.startsWith.city.map(v => ({ field: 'city', value: v })),
+        ...matches.startsWith.mlsareamajor.map(v => ({ field: 'mlsareamajor', value: v })),
+        ...matches.startsWith.subdivision.map(v => ({ field: 'subdivision', value: v }))
+    ];
+
+    if (allStartsWith.length === 1) {
+        const match = allStartsWith[0];
+        return buildResult('startsWith', match.field, match.value, 0.9);
+    }
+    if (allStartsWith.length > 1) {
+        // Multiple matches - check if they're all cities (common case like "Cabo")
+        const cityMatches = allStartsWith.filter(m => m.field === 'city');
+        if (cityMatches.length > 0) {
+            // Return cities as ambiguous match
+            return {
+                city: null,
+                mlsareamajor: null,
+                subdivision: null,
+                matchType: 'startsWith',
+                matchedField: 'city',
+                confidence: 0.85,
+                ambiguous: true,
+                inputReceived: userInput,
+                matches: cityMatches.map(m => m.value),
+                allMatches: allStartsWith
+            };
+        }
+        // Otherwise return first match as ambiguous
+        const firstMatch = allStartsWith[0];
+        return buildResult('startsWith', firstMatch.field, firstMatch.value, 0.85, allStartsWith.map(m => m.value));
+    }
+
+    // === CONTAINS MATCHES ===
+    const allContains = [
+        ...matches.contains.city.map(v => ({ field: 'city', value: v })),
+        ...matches.contains.mlsareamajor.map(v => ({ field: 'mlsareamajor', value: v })),
+        ...matches.contains.subdivision.map(v => ({ field: 'subdivision', value: v }))
+    ];
+
+    if (allContains.length === 1) {
+        const match = allContains[0];
+        return buildResult('contains', match.field, match.value, 0.8);
+    }
+    if (allContains.length > 1) {
+        // Multiple contains matches - prefer city level for broad search
+        const cityMatches = allContains.filter(m => m.field === 'city');
+        if (cityMatches.length > 0) {
+            return {
+                city: null,
+                mlsareamajor: null,
+                subdivision: null,
+                matchType: 'contains',
+                matchedField: 'city',
+                confidence: 0.75,
+                ambiguous: true,
+                inputReceived: userInput,
+                matches: cityMatches.map(m => m.value),
+                allMatches: allContains
+            };
+        }
+        const firstMatch = allContains[0];
+        return buildResult('contains', firstMatch.field, firstMatch.value, 0.75, allContains.map(m => m.value));
+    }
+
+    // === FUZZY MATCHES ===
+    const allFuzzy = [
+        ...matches.fuzzy.city.map(m => ({ field: 'city', value: m.value, distance: m.distance })),
+        ...matches.fuzzy.mlsareamajor.map(m => ({ field: 'mlsareamajor', value: m.value, distance: m.distance })),
+        ...matches.fuzzy.subdivision.map(m => ({ field: 'subdivision', value: m.value, distance: m.distance }))
+    ].sort((a, b) => a.distance - b.distance); // Sort by distance (closest first)
+
+    if (allFuzzy.length === 1) {
+        const match = allFuzzy[0];
+        const confidence = Math.max(0.5, 1 - (match.distance * 0.15));
+        return buildResult('fuzzy', match.field, match.value, confidence);
+    }
+    if (allFuzzy.length > 1) {
+        const firstMatch = allFuzzy[0];
+        const confidence = Math.max(0.5, 1 - (firstMatch.distance * 0.15));
+        return buildResult('fuzzy', firstMatch.field, firstMatch.value, confidence, allFuzzy.map(m => ({ value: m.value, field: m.field, distance: m.distance })));
+    }
+
+    // No matches found
+    console.log(`-------⚠️ No matches found for: "${userInput}"`);
+    return null;
+}
+
 // =============================================================================
 // CORE BUSINESS LOGIC - PROPERTY SEARCH FUNCTION
 // =============================================================================
@@ -478,6 +921,33 @@ const fetchProperties = async (req) => {
     // Destructure all possible search filters from request body
     const { propertyType, location, priceRange, bedrooms, bathrooms, cfe, pool, newListing, priceReduced, openHouse, virtualTour, page } = propInfo;
 
+    // =========================================================================
+    // LOCATION MATCHING - Resolve user input to city/area/subdivision
+    // =========================================================================
+    let locationMatch = null;
+    if (location) {
+        locationMatch = await areaCitySubdivisionMatch(location, client);
+        console.log('========== LOCATION MATCH RESULT ==========');
+        console.log(`Input: "${location}"`);
+        console.log('Match Result:', JSON.stringify(locationMatch, null, 2));
+
+        if (locationMatch) {
+            console.log('--- Summary ---');
+            console.log(`  Match Type: ${locationMatch.matchType}`);
+            console.log(`  Matched Field: ${locationMatch.matchedField}`);
+            console.log(`  Matched Value: ${locationMatch.matchedValue}`);
+            console.log(`  Confidence: ${locationMatch.confidence}`);
+            console.log(`  Ambiguous: ${locationMatch.ambiguous}`);
+            if (locationMatch.city) console.log(`  City: ${locationMatch.city}`);
+            if (locationMatch.mlsareamajor) console.log(`  MLS Area Major: ${locationMatch.mlsareamajor}`);
+            if (locationMatch.subdivision) console.log(`  Subdivision: ${locationMatch.subdivision}`);
+            if (locationMatch.matches) console.log(`  Multiple Matches: ${JSON.stringify(locationMatch.matches)}`);
+        } else {
+            console.log('  No match found - will fall back to LIKE search');
+        }
+        console.log('============================================');
+    }
+
     try {
         // Define which fields to retrieve from the database
         // These fields are used by the frontend to display property cards
@@ -492,20 +962,43 @@ const fetchProperties = async (req) => {
         // Property Type Filter
         if (propertyType) query += ` AND propertytypelabel = '${propertyType}'`;
 
-        // Location Filter - Special handling for "All La Paz" wildcard searches
+        // Location Filter - Uses areaCitySubdivisionMatch result for smart filtering
         if (location) {
+            // Special case: "All La Paz" wildcard search
             const allIncludeLocations = {
-                'All La Paz': [` AND mlsareamajor LIKE '%La Paz%'`]
+                'All La Paz': ` AND mlsareamajor LIKE '%La Paz%'`
             };
 
             if (allIncludeLocations[location]) {
-                // Use LIKE for wildcard location searches
-                query += allIncludeLocations[location].join('');
+                query += allIncludeLocations[location];
+            } else if (locationMatch === null) {
+                // No match found - fall back to LIKE search on all location fields
+                query += ` AND (city LIKE '%${location}%' OR mlsareamajor LIKE '%${location}%' OR subdivisionname LIKE '%${location}%')`;
+            } else if (locationMatch.ambiguous && locationMatch.matches) {
+                // Multiple matches - search across all matched values
+                if (locationMatch.matchedField === 'city') {
+                    const cityList = locationMatch.matches.map(c => `'${c}'`).join(', ');
+                    query += ` AND city IN (${cityList})`;
+                } else if (locationMatch.matchedField === 'mlsareamajor') {
+                    const areaList = locationMatch.matches.map(a => `'${a}'`).join(', ');
+                    query += ` AND mlsareamajor IN (${areaList})`;
+                } else {
+                    // subdivision matches
+                    const subdivList = locationMatch.matches.map(s => `'${s.value || s}'`).join(', ');
+                    query += ` AND subdivisionname IN (${subdivList})`;
+                }
             } else {
-                // Exact match for specific locations
-                //query += ` AND mlsareamajor = '${location}'`;
-                query += ` AND mlsareamajor LIKE '%${location}%'`;
-
+                // Clear match - use precise filters based on matched level
+                if (locationMatch.subdivision) {
+                    // Most specific: filter by subdivision (city/area already implied)
+                    query += ` AND subdivisionname = '${locationMatch.subdivision}'`;
+                } else if (locationMatch.mlsareamajor) {
+                    // Mid-level: filter by area
+                    query += ` AND mlsareamajor = '${locationMatch.mlsareamajor}'`;
+                } else if (locationMatch.city) {
+                    // Broadest: filter by city
+                    query += ` AND city = '${locationMatch.city}'`;
+                }
             }
         }
 
