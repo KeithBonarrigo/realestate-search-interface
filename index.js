@@ -86,8 +86,8 @@ console.log("-------✅ IN index.js - setting up session ----------------------"
  */
 let redisClient = null;
 
-if (!isLocalMode) {
-    // Production mode: Connect to Redis with TLS
+if (!isLocalMode && process.env.REDIS_URL) {
+    // Production mode with Redis configured: Connect to Redis with TLS
     redisClient = redis.createClient({
         url: process.env.REDIS_URL,      // Redis connection URL from environment
         socket: {
@@ -95,6 +95,8 @@ if (!isLocalMode) {
             rejectUnauthorized: false     // Allow self-signed certificates (common for hosted Redis)
         }
     });
+} else if (!isLocalMode) {
+    console.log('-------⚠️ PRODUCTION MODE: REDIS_URL not set, using in-memory sessions');
 } else {
     console.log('-------⚠️ LOCAL MODE: Skipping Redis (using in-memory sessions)');
 }
@@ -260,8 +262,16 @@ const client = new Client({
     })
 });
 
-client.connect();  // Establish database connection
-console.log(`-------✅ Database connected: ${isLocalMode ? 'Local (no SSL)' : 'Remote (SSL)'}`);
+// Connect to database with proper error handling
+client.connect()
+    .then(() => {
+        console.log(`-------✅ Database connected: ${isLocalMode ? 'Local (no SSL)' : 'Remote (SSL)'}`);
+    })
+    .catch((err) => {
+        console.error('-------❌ Database connection failed:', err.message);
+        console.error('Connection string used:', connectionString ? 'Set (hidden)' : 'UNDEFINED - check DATABASE_URL env var');
+        process.exit(1);  // Exit if database connection fails
+    });
 
 // =============================================================================
 // REDIS CONNECTION HANDLING (Production Only)
@@ -275,8 +285,13 @@ if (redisClient) {
         console.error('Redis connection error:', err);
     });
 
-    redisClient.connect();  // Initiate connection to Redis
-    console.log('-------✅ Redis connection initiated');
+    redisClient.connect()
+        .then(() => {
+            console.log('-------✅ Redis connected successfully');
+        })
+        .catch((err) => {
+            console.error('-------❌ Redis connection failed:', err.message);
+        });
 }
 
 // =============================================================================
