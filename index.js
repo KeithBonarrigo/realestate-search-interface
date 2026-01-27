@@ -972,7 +972,8 @@ const fetchProperties = async (req) => {
         // DYNAMIC SQL QUERY BUILDING
         // =====================================================================
         // Start with base query - "WHERE 1=1" allows easy appending of AND clauses
-        let query = `SELECT ${fieldList} FROM mls_properties WHERE 1=1`;
+        // Use DISTINCT ON (id) to prevent duplicate listings from appearing
+        let query = `SELECT DISTINCT ON (id) ${fieldList} FROM mls_properties WHERE 1=1`;
 
         // Property Type Filter
         if (propertyType) query += ` AND propertytypelabel = '${propertyType}'`;
@@ -1037,8 +1038,12 @@ const fetchProperties = async (req) => {
         if(openHouse) query += " AND openhousescount > 0";
         if(virtualTour) query += " AND virtualtourcount > 0";
 
-        // Sort by price high to low
-        query += " ORDER BY currentpricepublic DESC";
+        // Sort by id (required for DISTINCT ON) then by price high to low
+        // We wrap in a subquery to sort the final results by price
+        query += " ORDER BY id, currentpricepublic DESC";
+
+        // Wrap in subquery to re-sort by price after deduplication
+        query = `SELECT * FROM (${query}) AS deduplicated ORDER BY currentpricepublic DESC`;
 
         // Limit results to prevent overwhelming responses
         query += " LIMIT 50";
