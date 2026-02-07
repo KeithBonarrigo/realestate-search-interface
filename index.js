@@ -934,7 +934,7 @@ const fetchProperties = async (req) => {
     console.log(propInfo);
 
     // Destructure all possible search filters from request body
-    const { propertyType, location, priceRange, bedrooms, bathrooms, cfe, pool, newListing, priceReduced, openHouse, virtualTour, page } = propInfo;
+    const { propertyId, propertyType, location, priceRange, bedrooms, bathrooms, cfe, pool, beachfront, oceanView, furnished, garage, gated, petFriendly, newListing, priceReduced, openHouse, virtualTour, page } = propInfo;
 
     // =========================================================================
     // LOCATION MATCHING - Resolve user input to city/area/subdivision
@@ -974,6 +974,9 @@ const fetchProperties = async (req) => {
         // Start with base query - "WHERE 1=1" allows easy appending of AND clauses
         // Use DISTINCT ON (id) to prevent duplicate listings from appearing
         let query = `SELECT DISTINCT ON (id) ${fieldList} FROM mls_properties WHERE 1=1`;
+
+        // Single Property ID Filter - when requesting a specific listing
+        if (propertyId) query += ` AND listingid = '${propertyId}'`;
 
         // Property Type Filter
         if (propertyType) query += ` AND propertytypelabel = '${propertyType}'`;
@@ -1031,12 +1034,18 @@ const fetchProperties = async (req) => {
         if (bathrooms) query += ` AND bathsfull >= ${bathrooms}`;
 
         // Feature Filters (boolean toggles)
-        if(cfe) query += " AND electric LIKE '%CFE%'";           // CFE electric
-        if(pool) query += " AND poolfeatures LIKE '%Pool%'";      // Has pool
+        if(cfe) query += " AND electric LIKE '%CFE%'";
+        if(pool) query += " AND poolfeatures LIKE '%Pool%'";
+        if(beachfront) query += " AND (publicremarks ILIKE '%beachfront%' OR publicremarks ILIKE '%frente al mar%')";
+        if(oceanView) query += " AND (publicremarks ILIKE '%ocean view%' OR publicremarks ILIKE '%vista al mar%')";
+        if(furnished) query += " AND interiorfeatures LIKE '%Furnished%'";
+        if(garage) query += " AND exteriorfeatures LIKE '%Garage%'";
+        if(gated) query += " AND (exteriorfeatures LIKE '%Gated%' OR exteriorfeatures LIKE '%Gated Community%')";
+        if(petFriendly) query += " AND petsallowed = 'Yes'";
         if(newListing) query += " AND majorchangetype = 'New Listing'";
         if(priceReduced) query += " AND majorchangetype = 'Price Reduced'";
         if(openHouse) query += " AND openhousescount > 0";
-        if(virtualTour) query += " AND virtualtourcount > 0";
+        if(virtualTour) query += " AND virtualtourscount > 0";
 
         // Sort by id (required for DISTINCT ON) then by price high to low
         // We wrap in a subquery to sort the final results by price
